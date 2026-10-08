@@ -1,0 +1,6 @@
+{
+  "name": "KronoKPI — Multi-Branch Employee KPI Portal",
+  "description": "Production-ready multi-branch employee KPI submission portal and PIN-secured manager analytics dashboard with customizable KPI structures, photo evidence uploads, and LINE notification webhook integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
