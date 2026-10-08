@@ -15,7 +15,6 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
-  selectedBranchName,
   isManagerAuthenticated,
   onSelectTab,
   onOpenManagerLogin,
@@ -31,7 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={() => onSelectTab('branch_select')}
           className="text-lg font-bold tracking-tight text-slate-900 hover:text-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer text-left"
         >
-          KronoKPI
+          KPI
         </button>
 
         {/* Zone 2: Clean text navigation links */}
@@ -46,20 +45,6 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             เลือกสาขา
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onSelectTab('employee_workspace')}
-            className={`whitespace-nowrap shrink-0 transition-colors cursor-pointer pb-0.5 ${
-              activeTab === 'employee_workspace'
-                ? 'text-slate-900 font-semibold border-b-2 border-slate-900'
-                : 'hover:text-slate-900'
-            }`}
-          >
-            {selectedBranchName
-              ? `แบบฟอร์ม${selectedBranchName}`
-              : 'จัดการพนักงานและส่ง KPI'}
           </button>
 
           <button
@@ -115,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>หน้าสำหรับผู้จัดการ</span>
+              <span>หน้าสำหรับผู้ตรวจสอบ</span>
             </button>
           )}
         </div>

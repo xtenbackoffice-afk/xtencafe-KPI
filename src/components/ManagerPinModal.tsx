@@ -4,6 +4,7 @@ import { Lock, X, Delete, ShieldCheck, AlertCircle } from 'lucide-react';
 interface ManagerPinModalProps {
   isOpen: boolean;
   expectedPin: string;
+  actionDescription?: string;
   onSuccess: () => void;
   onClose: () => void;
 }
@@ -11,6 +12,7 @@ interface ManagerPinModalProps {
 export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
   isOpen,
   expectedPin,
+  actionDescription,
   onSuccess,
   onClose,
 }) => {
@@ -36,8 +38,13 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
       setErrorMsg('');
       onSuccess();
     } else {
-      setErrorMsg('รหัส PIN 4 หลักไม่ถูกต้อง (รหัสเริ่มต้นสำหรับทดสอบคือ 1234)');
+      setErrorMsg(
+        'รหัส PIN ไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่อีกครั้งครับ'
+      );
       setPinInput('');
+      setTimeout(() => {
+        hiddenInputRef.current?.focus();
+      }, 50);
     }
   };
 
@@ -59,7 +66,7 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput.length !== 4) {
-      setErrorMsg('กรุณากรอกรหัส PIN ให้ครบ 4 หลัก');
+      setErrorMsg('กรุณากรอกรหัส PIN ให้ครบ 4 หลักครับ');
       return;
     }
     verifyPinCode(pinInput);
@@ -71,7 +78,7 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="bg-white border border-slate-200 rounded-xl w-full max-w-sm p-6 relative"
+        className="bg-white border border-slate-200 rounded-xl w-full max-w-sm p-6 relative shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -83,16 +90,17 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
           <X className="w-4 h-4" />
         </button>
 
-        <div className="flex items-center gap-2.5 mb-4">
-          <div className="w-9 h-9 rounded-lg bg-slate-900 text-white flex items-center justify-center shrink-0">
+        <div className="flex items-start gap-3 mb-4 pr-6">
+          <div className="w-9 h-9 rounded-lg bg-slate-900 text-white flex items-center justify-center shrink-0 mt-0.5">
             <Lock className="w-4 h-4" />
           </div>
           <div>
             <h2 className="text-base font-bold text-slate-900">
-              ยืนยันตัวตนสำหรับผู้จัดการ
+              ยืนยันรหัส PIN สำหรับผู้ดูแลระบบ
             </h2>
-            <p className="text-xs text-slate-500">
-              กรุณากรอกรหัส PIN 4 หลักเพื่อเข้าสู่หน้าสำหรับผู้จัดการ
+            <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+              {actionDescription ||
+                'กรุณากรอกรหัส PIN 4 หลักเพื่อดำเนินการต่อ'}
             </p>
           </div>
         </div>
@@ -113,7 +121,7 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
               }
             }}
             className="sr-only"
-            aria-label="รหัส PIN 4 หลักสำหรับผู้จัดการ"
+            aria-label="รหัส PIN 4 หลัก"
           />
 
           <div
@@ -141,7 +149,7 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
           </div>
 
           {errorMsg && (
-            <div className="mb-4 p-2.5 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-xs font-medium text-red-700">
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-xs font-semibold text-red-700">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{errorMsg}</span>
             </div>
@@ -164,6 +172,7 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
               onClick={() => {
                 setPinInput('');
                 setErrorMsg('');
+                hiddenInputRef.current?.focus();
               }}
               className="h-11 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-600 transition-colors cursor-pointer"
             >
@@ -188,25 +197,24 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
             </button>
           </div>
 
-          <button
-            type="submit"
-            className="mt-5 w-full py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>เข้าสู่หน้าสำหรับผู้จัดการ</span>
-          </button>
-        </form>
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+            >
+              ยกเลิก
+            </button>
 
-        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-          <span>รหัส PIN เริ่มต้น:</span>
-          <button
-            type="button"
-            onClick={() => verifyPinCode(expectedPin)}
-            className="font-mono font-semibold text-slate-800 hover:underline cursor-pointer tabular-nums"
-          >
-            {expectedPin} (คลิกเพื่อเข้าสู่ระบบทันที)
-          </button>
-        </div>
+            <button
+              type="submit"
+              className="py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>ยืนยันรหัส PIN</span>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

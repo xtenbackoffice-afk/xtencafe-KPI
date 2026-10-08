@@ -60,8 +60,27 @@ export default function App() {
 
   const [isManagerAuthenticated, setIsManagerAuthenticated] =
     useState<boolean>(() => Boolean(initialUiSession?.isManagerAuthenticated));
-  const [isPinModalOpen, setIsPinModalOpen] = useState<boolean>(false);
+  const [pinModalConfig, setPinModalConfig] = useState<{
+    isOpen: boolean;
+    description: string;
+    onVerified: (() => void) | null;
+  }>({
+    isOpen: false,
+    description: '',
+    onVerified: null,
+  });
   const [isCustomizerOpen, setIsCustomizerOpen] = useState<boolean>(false);
+
+  const requestPinProtectedAction = (
+    description: string,
+    onVerified: () => void
+  ) => {
+    setPinModalConfig({
+      isOpen: true,
+      description,
+      onVerified,
+    });
+  };
 
   // Hydrate ข้อมูลจาก IndexedDB และ Supabase Cloud เมื่อเปิดแอปพลิเคชัน
   useEffect(() => {
@@ -321,19 +340,38 @@ export default function App() {
         isManagerAuthenticated={isManagerAuthenticated}
         onSelectTab={(tab) => {
           if (tab === 'manager_dashboard' && !isManagerAuthenticated) {
-            setIsPinModalOpen(true);
+            requestPinProtectedAction(
+              'กรุณากรอกรหัส PIN 4 หลักเพื่อเข้าสู่หน้าสำหรับผู้ตรวจสอบ',
+              () => {
+                setIsManagerAuthenticated(true);
+                setActiveTab('manager_dashboard');
+              }
+            );
             return;
           }
           setActiveTab(tab);
         }}
-        onOpenManagerLogin={() => setIsPinModalOpen(true)}
+        onOpenManagerLogin={() =>
+          requestPinProtectedAction(
+            'กรุณากรอกรหัส PIN 4 หลักเพื่อเข้าสู่หน้าสำหรับผู้ตรวจสอบ',
+            () => {
+              setIsManagerAuthenticated(true);
+              setActiveTab('manager_dashboard');
+            }
+          )
+        }
         onLogoutManager={() => {
           setIsManagerAuthenticated(false);
           if (activeTab === 'manager_dashboard') {
             setActiveTab('branch_select');
           }
         }}
-        onOpenCustomizer={() => setIsCustomizerOpen(true)}
+        onOpenCustomizer={() =>
+          requestPinProtectedAction(
+            'กรุณากรอกรหัส PIN 4 หลักเพื่อสร้าง แก้ไข หรือลบคำถามในแบบฟอร์ม',
+            () => setIsCustomizerOpen(true)
+          )
+        }
       />
 
       {/* Main Content Viewport */}
@@ -347,11 +385,18 @@ export default function App() {
             onAddBranch={handleAddBranch}
             onUpdateBranch={handleUpdateBranch}
             onDeleteBranch={handleDeleteBranch}
+            onRequestPinProtectedAction={requestPinProtectedAction}
             onOpenManagerLogin={() => {
               if (isManagerAuthenticated) {
                 setActiveTab('manager_dashboard');
               } else {
-                setIsPinModalOpen(true);
+                requestPinProtectedAction(
+                  'กรุณากรอกรหัส PIN 4 หลักเพื่อเข้าสู่หน้าสำหรับผู้ตรวจสอบ',
+                  () => {
+                    setIsManagerAuthenticated(true);
+                    setActiveTab('manager_dashboard');
+                  }
+                );
               }
             }}
           />
@@ -414,7 +459,12 @@ export default function App() {
                   questions={questions}
                   selectedEmployeeId={selectedEmployeeIdForForm}
                   onSelectEmployeeId={setSelectedEmployeeIdForForm}
-                  onOpenCustomizer={() => setIsCustomizerOpen(true)}
+                  onOpenCustomizer={() =>
+                    requestPinProtectedAction(
+                      'กรุณากรอกรหัส PIN 4 หลักเพื่อสร้าง แก้ไข หรือลบคำถามในแบบฟอร์ม',
+                      () => setIsCustomizerOpen(true)
+                    )
+                  }
                   onSubmitKpi={handleKpiSubmit}
                 />
               </div>
@@ -441,48 +491,29 @@ export default function App() {
         )}
       </main>
 
-      {/* Quiet Minimalist Footer */}
-      <footer className="border-t border-slate-200 bg-white mt-12">
-        <div className="max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
-          <span>
-            ระบบบริหารจัดการและแบบฟอร์มประเมิน KPI พนักงานหลายสาขา · บันทึกข้อมูลถาวรอัตโนมัติ (LocalStorage / IndexedDB / Supabase)
-          </span>
-          <div className="flex items-center gap-4">
-            <button
-              type="button"
-              onClick={() => setIsCustomizerOpen(true)}
-              className="hover:text-slate-900 transition-colors cursor-pointer"
-            >
-              จัดการหมวดหมู่และคำถามแบบฟอร์ม
-            </button>
-            <span>·</span>
-            <button
-              type="button"
-              onClick={() => {
-                if (isManagerAuthenticated) {
-                  setActiveTab('manager_dashboard');
-                } else {
-                  setIsPinModalOpen(true);
-                }
-              }}
-              className="hover:text-slate-900 transition-colors cursor-pointer"
-            >
-              หน้าสำหรับผู้จัดการ (รหัส PIN: 1234)
-            </button>
-          </div>
-        </div>
-      </footer>
-
-      {/* 4-Digit PIN Modal for Manager View */}
+      {/* 4-Digit PIN Modal for Sensitive Administrative Actions & Manager View */}
       <ManagerPinModal
-        isOpen={isPinModalOpen}
+        isOpen={pinModalConfig.isOpen}
         expectedPin={managerPin}
+        actionDescription={pinModalConfig.description}
         onSuccess={() => {
-          setIsManagerAuthenticated(true);
-          setIsPinModalOpen(false);
-          setActiveTab('manager_dashboard');
+          const callback = pinModalConfig.onVerified;
+          setPinModalConfig({
+            isOpen: false,
+            description: '',
+            onVerified: null,
+          });
+          if (callback) {
+            callback();
+          }
         }}
-        onClose={() => setIsPinModalOpen(false)}
+        onClose={() =>
+          setPinModalConfig({
+            isOpen: false,
+            description: '',
+            onVerified: null,
+          })
+        }
       />
 
       {/* Google Forms-style Categorized Question Builder Modal */}

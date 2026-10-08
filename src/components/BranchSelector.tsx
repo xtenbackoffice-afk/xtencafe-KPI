@@ -31,6 +31,10 @@ interface BranchSelectorProps {
   ) => void;
   onDeleteBranch: (branchId: string) => void;
   onOpenManagerLogin: () => void;
+  onRequestPinProtectedAction: (
+    description: string,
+    onVerified: () => void
+  ) => void;
 }
 
 export const BranchSelector: React.FC<BranchSelectorProps> = ({
@@ -42,6 +46,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
   onUpdateBranch,
   onDeleteBranch,
   onOpenManagerLogin,
+  onRequestPinProtectedAction,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newBranchName, setNewBranchName] = useState('');
@@ -61,6 +66,19 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
   const showToast = (msg: string) => {
     setStatusMessage(msg);
     setTimeout(() => setStatusMessage(null), 3500);
+  };
+
+  const handleToggleAddBranchForm = () => {
+    if (showAddForm) {
+      setShowAddForm(false);
+      return;
+    }
+    onRequestPinProtectedAction(
+      'กรุณากรอกรหัส PIN 4 หลักเพื่อเพิ่มสาขาและสถานที่ตั้งใหม่',
+      () => {
+        setShowAddForm(true);
+      }
+    );
   };
 
   const handleCreateBranch = (e: React.FormEvent) => {
@@ -93,11 +111,16 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
 
   const startEditingBranch = (e: React.MouseEvent, branch: Branch) => {
     e.stopPropagation();
-    setEditingBranch(branch);
-    setEditName(branch.name);
-    setEditCode(branch.code);
-    setEditDistrict(branch.district);
-    setEditAddress(branch.addressSummary);
+    onRequestPinProtectedAction(
+      `กรุณากรอกรหัส PIN 4 หลักเพื่อแก้ไขชื่อสาขาและสถานที่ตั้งของ "${branch.name}"`,
+      () => {
+        setEditingBranch(branch);
+        setEditName(branch.name);
+        setEditCode(branch.code);
+        setEditDistrict(branch.district);
+        setEditAddress(branch.addressSummary);
+      }
+    );
   };
 
   const handleSaveEditBranch = (e: React.FormEvent) => {
@@ -122,8 +145,13 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
       setErrorMsg('ระบบต้องมีสาขาที่เปิดใช้งานอย่างน้อย 1 สาขา');
       return;
     }
-    onDeleteBranch(branch.id);
-    showToast(`ลบ "${branch.name}" ออกจากระบบเรียบร้อยแล้ว`);
+    onRequestPinProtectedAction(
+      `กรุณากรอกรหัส PIN 4 หลักเพื่อยืนยันการลบ "${branch.name}"`,
+      () => {
+        onDeleteBranch(branch.id);
+        showToast(`ลบ "${branch.name}" ออกจากระบบเรียบร้อยแล้ว`);
+      }
+    );
   };
 
   return (
@@ -131,25 +159,15 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
       {/* Top Hero / Context Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-8 border-b border-slate-200">
         <div className="max-w-2xl">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-500 mb-2">
-            <span>ระบบบริหารจัดการหลายสาขา</span>
-            <span aria-hidden="true">·</span>
-            <span>แบบฟอร์มประเมิน KPI แบ่งตามหมวดหมู่</span>
-            <span aria-hidden="true">·</span>
-            <span>คุ้มครองความเป็นส่วนตัวของข้อมูลพนักงาน</span>
-          </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
-            เลือกสาขาที่ปฏิบัติงาน หรือจัดการข้อมูลสาขา
+            xtencafe KPI
           </h1>
-          <p className="mt-2 text-sm sm:text-base text-slate-600 leading-relaxed">
-            เลือกสาขาด้านล่างเพื่อจัดการรายชื่อชื่อเล่นพนักงานและส่งแบบฟอร์ม KPI ประจำวัน หรือเพิ่ม แก้ไข และลบข้อมูลสถานที่ตั้งของแต่ละสาขาได้โดยตรง
-          </p>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
-            onClick={() => setShowAddForm((prev) => !prev)}
+            onClick={handleToggleAddBranchForm}
             className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -162,7 +180,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
             className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
           >
             <Lock className="w-3.5 h-3.5" />
-            <span>หน้าสำหรับผู้จัดการ</span>
+            <span>หน้าสำหรับผู้ตรวจสอบ</span>
           </button>
         </div>
       </div>
@@ -494,9 +512,6 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
               เมื่อพนักงานกดส่งข้อมูลประเมิน KPI แล้ว ระบบจะส่งการแจ้งเตือนไปยังกลุ่ม LINE ของฝ่ายบริหารและล้างข้อมูลบนหน้าจอทันที โดยไม่แสดงคะแนนย้อนหลังของพนักงานท่านใดบนหน้าจอสำหรับพนักงาน
             </p>
           </div>
-        </div>
-        <div className="text-xs text-slate-500 font-mono shrink-0">
-          ใช้รหัส PIN 4 หลักสำหรับผู้จัดการ
         </div>
       </div>
     </div>
