@@ -829,20 +829,20 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
             </div>
           </div>
 
-          {/* Optional LINE Webhook Dispatch Log Drawer */}
+          {/* Optional LINE Messaging API Notification History Drawer */}
           {showWebhookDrawer && (
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
                 <div>
                   <h2 className="text-sm font-bold text-slate-900">
-                    ประวัติการส่งแจ้งเตือนผ่าน LINE Webhook
+                    ประวัติการส่งแจ้งเตือนผ่าน LINE Messaging API
                   </h2>
                   <p className="text-xs text-slate-500">
-                    ตรวจสอบข้อมูลที่สร้างโดยฟังก์ชัน{' '}
+                    แสดงสถานะการส่งข้อมูลแจ้งเตือนไปยัง{' '}
                     <span className="font-mono">
-                      sendLineNotification(formData)
+                      https://api.line.me/v2/bot/message/push
                     </span>{' '}
-                    เมื่อพนักงานกดส่งแบบฟอร์ม
+                    เมื่อพนักงานกดส่งแบบฟอร์ม KPI
                   </p>
                 </div>
                 <button
@@ -856,39 +856,89 @@ export const ManagerDashboard: React.FC<ManagerDashboardProps> = ({
 
               {lineLogs.length === 0 ? (
                 <p className="text-xs text-slate-500 py-4">
-                  ยังไม่มีรายการส่งแจ้งเตือน LINE ใหม่ในรอบการใช้งานนี้ ท่านสามารถทดลองส่งแบบฟอร์ม KPI จากหน้าสาขาเพื่อดูตัวอย่างข้อความแจ้งเตือน LINE ได้ทันที
+                  ยังไม่มีรายการส่งแจ้งเตือน LINE ในรอบการใช้งานนี้ ท่านสามารถทดลองส่งแบบฟอร์ม KPI จากหน้าสาขาเพื่อตรวจสอบสถานะการส่งแจ้งเตือน LINE ได้ทันทีครับ
                 </p>
               ) : (
-                <div className="space-y-3 max-h-80 overflow-y-auto">
-                  {lineLogs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2 text-slate-500 font-mono mb-1.5">
-                          <span>
-                            {new Date(log.timestamp).toLocaleTimeString('th-TH')}
-                          </span>
-                          <span>·</span>
-                          <span className="text-emerald-700 font-semibold">
-                            POST {log.endpointUrl}
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {lineLogs.map((log) => {
+                    const isSuccess = log.status === 'dispatched';
+                    const isError = log.status === 'error';
+
+                    return (
+                      <div
+                        key={log.id}
+                        className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-3 text-xs"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-slate-500">
+                              {new Date(log.timestamp).toLocaleTimeString(
+                                'th-TH'
+                              )}{' '}
+                              น.
+                            </span>
+                            <span>·</span>
+                            <span className="font-semibold text-slate-900">
+                              {log.branchName} ({log.employeeName})
+                            </span>
+                            <span>·</span>
+                            <span className="font-mono text-slate-600">
+                              POST {log.endpointUrl}
+                            </span>
+                          </div>
+
+                          <span
+                            className={`px-2.5 py-1 rounded-md font-semibold ${
+                              isSuccess
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : isError
+                                ? 'bg-red-100 text-red-700 border border-red-200'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            {isSuccess
+                              ? 'ส่งแจ้งเตือน LINE สำเร็จ'
+                              : isError
+                              ? 'ส่งแจ้งเตือนไม่สำเร็จ'
+                              : 'โหมดจำลอง (รอตั้งค่า Token)'}
                           </span>
                         </div>
-                        <pre className="p-2.5 bg-white border border-slate-200 rounded font-mono text-[11px] text-slate-800 whitespace-pre-wrap">
-                          {log.formattedMessage}
-                        </pre>
-                      </div>
-                      <div>
-                        <div className="text-slate-500 font-mono mb-1.5">
-                          ข้อมูล JSON Payload (สำหรับส่งไปยัง Supabase Edge Function):
+
+                        {log.statusMessage && (
+                          <div
+                            className={`px-3 py-2 rounded-md font-medium ${
+                              isSuccess
+                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                : isError
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : 'bg-white text-slate-700 border border-slate-200'
+                            }`}
+                          >
+                            สถานะ: {log.statusMessage}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div>
+                            <div className="text-slate-600 font-semibold mb-1.5">
+                              ข้อความแจ้งเตือนที่จัดรูปแบบ (สาขา / ชื่อเล่นพนักงาน / วันที่ / คำตอบ):
+                            </div>
+                            <pre className="p-2.5 bg-white border border-slate-200 rounded font-mono text-[11px] text-slate-800 whitespace-pre-wrap">
+                              {log.formattedMessage}
+                            </pre>
+                          </div>
+                          <div>
+                            <div className="text-slate-600 font-semibold mb-1.5">
+                              ข้อมูล JSON Payload (LINE Messaging API Push Message):
+                            </div>
+                            <pre className="p-2.5 bg-slate-900 text-slate-100 rounded font-mono text-[11px] overflow-x-auto max-h-44">
+                              {log.payloadJson}
+                            </pre>
+                          </div>
                         </div>
-                        <pre className="p-2.5 bg-slate-900 text-slate-100 rounded font-mono text-[11px] overflow-x-auto max-h-40">
-                          {log.payloadJson}
-                        </pre>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

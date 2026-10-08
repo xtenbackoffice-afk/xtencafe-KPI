@@ -81,6 +81,7 @@ export interface LineWebhookLog {
   imageCount: number;
   endpointUrl: string;
   status: 'dispatched' | 'simulated_ok' | 'error';
+  statusMessage?: string;
   formattedMessage: string;
   payloadJson: string;
 }
