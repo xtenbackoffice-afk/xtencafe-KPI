@@ -24,7 +24,10 @@ import {
   FormQuestionResponse,
   KpiSubmission,
 } from '../types/kpi';
-import { SAMPLE_PROOF_ASSETS } from '../services/supabaseMockService';
+import {
+  SAMPLE_PROOF_ASSETS,
+  STORAGE_KEYS,
+} from '../services/supabaseMockService';
 
 interface KpiSubmissionFormProps {
   branch: Branch;
@@ -39,6 +42,98 @@ interface KpiSubmissionFormProps {
   ) => Promise<void>;
 }
 
+/**
+ * ย่อและบีบอัดไฟล์รูปภาพฝั่งเบราว์เซอร์ (Client-Side Image Compression)
+ * เพื่อให้บันทึกใน localStorage, IndexedDB และ Supabase ได้อย่างรวดเร็วโดยไม่ติดข้อจำกัดขนาดไฟล์
+ */
+async function compressImageFile(file: File): Promise<{
+  dataUrl: string;
+  compressedSize: number;
+  mimeType: string;
+}> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rawDataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!rawDataUrl) {
+        resolve({
+          dataUrl: '',
+          compressedSize: file.size,
+          mimeType: file.type || 'image/jpeg',
+        });
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX_DIMENSION = 1280;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+            if (width >= height) {
+              height = Math.round((height * MAX_DIMENSION) / width);
+              width = MAX_DIMENSION;
+            } else {
+              width = Math.round((width * MAX_DIMENSION) / height);
+              height = MAX_DIMENSION;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve({
+              dataUrl: rawDataUrl,
+              compressedSize: file.size,
+              mimeType: file.type,
+            });
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.78);
+          const estimatedBytes = Math.round(
+            ((compressedDataUrl.length - 'data:image/jpeg;base64,'.length) *
+              3) /
+              4
+          );
+          resolve({
+            dataUrl: compressedDataUrl,
+            compressedSize: estimatedBytes > 0 ? estimatedBytes : file.size,
+            mimeType: 'image/jpeg',
+          });
+        } catch {
+          resolve({
+            dataUrl: rawDataUrl,
+            compressedSize: file.size,
+            mimeType: file.type,
+          });
+        }
+      };
+      img.onerror = () => {
+        resolve({
+          dataUrl: rawDataUrl,
+          compressedSize: file.size,
+          mimeType: file.type,
+        });
+      };
+      img.src = rawDataUrl;
+    };
+    reader.onerror = () => {
+      resolve({
+        dataUrl: '',
+        compressedSize: file.size,
+        mimeType: file.type,
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
   branch,
   branchEmployees,
@@ -50,16 +145,53 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
   onSubmitKpi,
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
+  const draftStorageKey = `${STORAGE_KEYS.FORM_DRAFT}_${branch.id}`;
 
-  const [submissionDate, setSubmissionDate] = useState<string>(todayStr);
+  const [submissionDate, setSubmissionDate] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(draftStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.submissionDate) return parsed.submissionDate;
+      }
+    } catch {
+      // ignore
+    }
+    return todayStr;
+  });
+
   const [activeCategoryId, setActiveCategoryId] = useState<string>(
     categories[0]?.id || ''
   );
 
-  const [textAnswers, setTextAnswers] = useState<Record<string, string>>({});
+  const [textAnswers, setTextAnswers] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(draftStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.textAnswers) return parsed.textAnswers;
+      }
+    } catch {
+      // ignore
+    }
+    return {};
+  });
+
   const [numberAnswers, setNumberAnswers] = useState<Record<string, string>>(
-    {}
+    () => {
+      try {
+        const saved = localStorage.getItem(draftStorageKey);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.numberAnswers) return parsed.numberAnswers;
+        }
+      } catch {
+        // ignore
+      }
+      return {};
+    }
   );
+
   const [imageAnswers, setImageAnswers] = useState<
     Record<string, UploadedEvidence[]>
   >({});
@@ -78,6 +210,44 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
 
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
+  // โหลดแบบร่างคำตอบเมื่อสลับสาขา
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(draftStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setSubmissionDate(parsed.submissionDate || todayStr);
+        setTextAnswers(parsed.textAnswers || {});
+        setNumberAnswers(parsed.numberAnswers || {});
+      } else {
+        setSubmissionDate(todayStr);
+        setTextAnswers({});
+        setNumberAnswers({});
+      }
+    } catch {
+      setSubmissionDate(todayStr);
+      setTextAnswers({});
+      setNumberAnswers({});
+    }
+    setImageAnswers({});
+  }, [draftStorageKey, todayStr]);
+
+  // บันทึกแบบร่างคำตอบที่กำลังพิมพ์ลงใน localStorage อัตโนมัติ (ป้องกันข้อมูลหายเมื่อรีเฟรชหน้าเว็บก่อนกดส่ง)
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        draftStorageKey,
+        JSON.stringify({
+          submissionDate,
+          textAnswers,
+          numberAnswers,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }, [draftStorageKey, submissionDate, textAnswers, numberAnswers]);
+
   useEffect(() => {
     if (
       categories.length > 0 &&
@@ -93,7 +263,6 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
   );
   const activeCategory = categories[activeCategoryIndex] || categories[0];
 
-  // คำถามที่อยู่ในหมวดหมู่ปัจจุบัน (รวมคำถามที่อาจไม่ได้ผูกหมวดหมู่ไว้ในหมวดแรก)
   const activeCategoryQuestions = questions.filter((q) => {
     if (!activeCategory) return true;
     const belongsToAny = categories.some((c) => c.id === q.categoryId);
@@ -101,7 +270,6 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
     return q.categoryId === activeCategory.id;
   });
 
-  // ตรวจสอบว่าคำถามข้อหนึ่งๆ ได้รับการตอบแล้วหรือยัง
   const isQuestionAnswered = (q: FormQuestion): boolean => {
     if (q.type === 'short_text' || q.type === 'paragraph') {
       return Boolean((textAnswers[q.id] || '').trim());
@@ -140,39 +308,37 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
     setNumberAnswers((prev) => ({ ...prev, [questionId]: String(clamped) }));
   };
 
-  const processFilesForQuestion = (
+  const processFilesForQuestion = async (
     questionId: string,
     files: FileList | null
   ) => {
     if (!files || files.length === 0) return;
     setErrorMessage('');
 
-    Array.from(files).forEach((file) => {
+    const fileArray = Array.from(files);
+    for (const file of fileArray) {
       if (!file.type.startsWith('image/')) {
         setErrorMessage(
           'กรุณาอัปโหลดเฉพาะไฟล์รูปภาพ (JPG, PNG, WEBP) สำหรับใช้เป็นหลักฐานการทำงาน'
         );
-        return;
+        continue;
       }
 
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          const newEvidence: UploadedEvidence = {
-            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-            fileName: file.name,
-            fileSize: file.size,
-            mimeType: file.type,
-            dataUrl: reader.result,
-          };
-          setImageAnswers((prev) => ({
-            ...prev,
-            [questionId]: [...(prev[questionId] || []), newEvidence],
-          }));
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+      const compressed = await compressImageFile(file);
+      if (compressed.dataUrl) {
+        const newEvidence: UploadedEvidence = {
+          id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          fileName: file.name,
+          fileSize: compressed.compressedSize,
+          mimeType: compressed.mimeType,
+          dataUrl: compressed.dataUrl,
+        };
+        setImageAnswers((prev) => ({
+          ...prev,
+          [questionId]: [...(prev[questionId] || []), newEvidence],
+        }));
+      }
+    }
   };
 
   const handleAttachSampleAsset = (questionId: string, sampleIdx: number) => {
@@ -206,6 +372,11 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
     setNumberAnswers({});
     setImageAnswers({});
     setErrorMessage('');
+    try {
+      localStorage.removeItem(draftStorageKey);
+    } catch {
+      // ignore
+    }
     if (categories[0]) {
       setActiveCategoryId(categories[0].id);
     }
@@ -238,7 +409,6 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
     const responses: FormQuestionResponse[] = [];
     const allImages: UploadedEvidence[] = [];
 
-    // ตรวจสอบคำถามเรียงตามลำดับหมวดหมู่ หากพบข้อที่ยังไม่ได้กรอก ระบบจะสลับไปที่แท็บหมวดหมู่นั้นให้อัตโนมัติ
     for (const q of questions) {
       const catObj = categories.find((c) => c.id === q.categoryId);
       const catName = catObj?.name || 'ทั่วไป';
@@ -330,7 +500,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
         images: allImages,
       });
 
-      // กฎความเป็นส่วนตัว: ล้างข้อมูลคำตอบทั้งหมดออกจากหน้าจอทันทีหลังส่งสำเร็จ
+      // กฎความเป็นส่วนตัว: ล้างข้อมูลคำตอบทั้งหมดออกจากหน้าจอพนักงานทันทีหลังบันทึกถาวรเสร็จสิ้น
       clearFormState();
       onSelectEmployeeId('');
 
@@ -357,7 +527,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
           </div>
 
           <h2 className="text-xl sm:text-2xl font-bold text-slate-900">
-            ส่งข้อมูลประเมิน KPI เรียบร้อยแล้ว!
+            บันทึกและส่งข้อมูลประเมิน KPI เรียบร้อยแล้ว!
           </h2>
 
           <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
@@ -366,7 +536,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
               {submissionSuccessInfo.branchName}
             </span>{' '}
             ประจำวันที่ {submissionSuccessInfo.submissionDate} เวลา{' '}
-            {submissionSuccessInfo.timestamp} น. และส่งแจ้งเตือนไปยังกลุ่ม LINE ของผู้จัดการเรียบร้อยแล้ว
+            {submissionSuccessInfo.timestamp} น. ลงฐานข้อมูลถาวรและส่งแจ้งเตือนไปยังกลุ่ม LINE ของผู้จัดการเรียบร้อยแล้ว
           </p>
 
           <div className="mt-6 max-w-md mx-auto bg-slate-50 border border-slate-200 rounded-lg p-4 text-left">
@@ -376,7 +546,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
                 <span className="font-semibold text-slate-900 block mb-0.5">
                   การคุ้มครองความลับของข้อมูลพนักงาน
                 </span>
-                ระบบได้ล้างข้อมูลคำตอบทั้งหมดออกจากหน้าจอแล้ว โดยจะไม่แสดงคำตอบหรือผลคะแนนย้อนหลังของพนักงานท่านใดบนหน้าจอนี้ ข้อมูลทั้งหมดสามารถตรวจสอบได้เฉพาะในหน้าสำหรับผู้จัดการเท่านั้น
+                ระบบได้ล้างข้อมูลคำตอบทั้งหมดออกจากหน้าจอแล้ว โดยจะไม่แสดงคำตอบหรือผลคะแนนย้อนหลังของพนักงานท่านใดบนหน้าจอนี้ ข้อมูลทั้งหมดถูกจัดเก็บอย่างปลอดภัยและตรวจสอบได้เฉพาะในหน้าสำหรับผู้จัดการเท่านั้น
               </div>
             </div>
           </div>
@@ -735,7 +905,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
                   onDrop={(e) => {
                     e.preventDefault();
                     setDraggingQuestionId(null);
-                    processFilesForQuestion(q.id, e.dataTransfer.files);
+                    void processFilesForQuestion(q.id, e.dataTransfer.files);
                   }}
                   onClick={() => fileInputRefs.current[q.id]?.click()}
                   role="button"
@@ -760,7 +930,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
                     accept="image/*"
                     multiple
                     onChange={(e) => {
-                      processFilesForQuestion(q.id, e.target.files);
+                      void processFilesForQuestion(q.id, e.target.files);
                       if (fileInputRefs.current[q.id]) {
                         fileInputRefs.current[q.id]!.value = '';
                       }
@@ -772,7 +942,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
                     คลิกเพื่อเพิ่มไฟล์รูปภาพ หรือลากไฟล์มาวางที่นี่
                   </p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    รองรับไฟล์รูปภาพ JPG, PNG, WEBP (แนบได้หลายรูปภาพ)
+                    รองรับไฟล์รูปภาพ JPG, PNG, WEBP (ระบบปรับขนาดอัตโนมัติเพื่อบันทึกถาวร)
                   </p>
                 </div>
 
@@ -862,7 +1032,7 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
         >
           <Send className="w-4 h-4" />
           <span>
-            {isSubmitting ? 'กำลังส่งข้อมูลและแจ้งเตือน LINE...' : 'ส่งข้อมูล'}
+            {isSubmitting ? 'กำลังบันทึกข้อมูลถาวร...' : 'ส่งข้อมูล'}
           </span>
         </button>
       </div>

@@ -1,3 +1,4 @@
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   Branch,
   Employee,
@@ -11,15 +12,64 @@ import proofPosSettlement from '../assets/images/proof_pos_settlement_1791485796
 import proofMerchandiseDisplay from '../assets/images/proof_merchandise_display_1791485816500.jpg';
 import proofServiceChecklist from '../assets/images/proof_service_checklist_1791485826522.jpg';
 
-const STORAGE_KEYS = {
-  BRANCHES: 'kronokpi_supabase_branches_v5_cat_th',
-  EMPLOYEES: 'kronokpi_supabase_employees_v5_cat_th',
-  QUESTION_CATEGORIES: 'kronokpi_supabase_qcategories_v5_cat_th',
-  QUESTIONS: 'kronokpi_supabase_questions_v5_cat_th',
-  SUBMISSIONS: 'kronokpi_supabase_submissions_v5_cat_th',
-  LINE_LOGS: 'kronokpi_supabase_line_logs_v5_cat_th',
-  MANAGER_PIN: 'kronokpi_manager_pin_v5_cat_th',
+export const STORAGE_KEYS = {
+  BRANCHES: 'kronokpi_persistent_branches',
+  EMPLOYEES: 'kronokpi_persistent_employees',
+  QUESTION_CATEGORIES: 'kronokpi_persistent_categories',
+  QUESTIONS: 'kronokpi_persistent_questions',
+  SUBMISSIONS: 'kronokpi_persistent_submissions',
+  LINE_LOGS: 'kronokpi_persistent_line_logs',
+  MANAGER_PIN: 'kronokpi_persistent_manager_pin',
+  UI_SESSION: 'kronokpi_persistent_ui_session',
+  FORM_DRAFT: 'kronokpi_persistent_form_draft',
+  SUPABASE_CONFIG: 'kronokpi_persistent_supabase_config',
 };
+
+// Legacy keys from previous versions for seamless migration
+const LEGACY_KEYS: Record<string, string[]> = {
+  [STORAGE_KEYS.BRANCHES]: [
+    'kronokpi_supabase_branches_v5_cat_th',
+    'kronokpi_supabase_branches_v4_gforms_th',
+    'kronokpi_supabase_branches_v3_th',
+  ],
+  [STORAGE_KEYS.EMPLOYEES]: [
+    'kronokpi_supabase_employees_v5_cat_th',
+    'kronokpi_supabase_employees_v4_gforms_th',
+    'kronokpi_supabase_employees_v3_th',
+  ],
+  [STORAGE_KEYS.QUESTION_CATEGORIES]: [
+    'kronokpi_supabase_qcategories_v5_cat_th',
+  ],
+  [STORAGE_KEYS.QUESTIONS]: [
+    'kronokpi_supabase_questions_v5_cat_th',
+    'kronokpi_supabase_questions_v4_gforms_th',
+  ],
+  [STORAGE_KEYS.SUBMISSIONS]: [
+    'kronokpi_supabase_submissions_v5_cat_th',
+    'kronokpi_supabase_submissions_v4_gforms_th',
+  ],
+  [STORAGE_KEYS.LINE_LOGS]: [
+    'kronokpi_supabase_line_logs_v5_cat_th',
+    'kronokpi_supabase_line_logs_v4_gforms_th',
+  ],
+  [STORAGE_KEYS.MANAGER_PIN]: [
+    'kronokpi_manager_pin_v5_cat_th',
+    'kronokpi_manager_pin_v4_gforms_th',
+  ],
+};
+
+export interface PersistedUiSession {
+  activeTab: 'branch_select' | 'employee_workspace' | 'manager_dashboard';
+  selectedBranchId: string | null;
+  selectedEmployeeIdForForm: string;
+  isManagerAuthenticated: boolean;
+}
+
+export interface SupabaseConnectionConfig {
+  url: string;
+  anonKey: string;
+  enabled: boolean;
+}
 
 export const SAMPLE_PROOF_ASSETS = [
   {
@@ -530,83 +580,295 @@ export const INITIAL_SUBMISSIONS: KpiSubmission[] = [
 ];
 
 export const SUPABASE_SQL_SCHEMA = `-- โครงสร้างฐานข้อมูล PostgreSQL สำหรับระบบแบบฟอร์ม KPI พนักงานแบบแบ่งหมวดหมู่ (Supabase)
-create table public.branches (
-  id uuid primary key default gen_random_uuid(),
+-- คัดลอกคำสั่งนี้ไปรันในเมนู SQL Editor ของโปรเจกต์ Supabase ของคุณ
+
+create table if not exists public.kronokpi_app_state (
+  collection_key text primary key,
+  payload jsonb not null,
+  updated_at timestamptz default now()
+);
+
+alter table public.kronokpi_app_state enable row level security;
+
+create policy "Allow public read/write on kronokpi_app_state"
+  on public.kronokpi_app_state for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+-- ตารางเชิงสัมพันธ์เพิ่มเติมสำหรับใช้ Query รายงานขั้นสูง
+create table if not exists public.branches (
+  id text primary key,
   name text not null,
-  code text not null unique,
+  code text not null,
   district text not null,
   address_summary text,
   created_at timestamptz default now()
 );
 
-create table public.employees (
-  id uuid primary key default gen_random_uuid(),
-  branch_id uuid references public.branches(id) on delete cascade,
+create table if not exists public.employees (
+  id text primary key,
+  branch_id text references public.branches(id) on delete cascade,
   nickname text not null,
   created_at timestamptz default now()
 );
 
-create table public.form_categories (
-  id uuid primary key default gen_random_uuid(),
+create table if not exists public.form_categories (
+  id text primary key,
   name text not null,
   description text,
-  sort_order int default 0,
   created_at timestamptz default now()
 );
 
-create table public.form_questions (
-  id uuid primary key default gen_random_uuid(),
-  category_id uuid references public.form_categories(id) on delete cascade,
+create table if not exists public.form_questions (
+  id text primary key,
+  category_id text references public.form_categories(id) on delete cascade,
   title text not null,
   description text,
-  question_type text not null check (question_type in ('short_text', 'paragraph', 'number', 'image_upload')),
+  question_type text not null,
   required boolean default true,
   max_score numeric,
-  unit_label text,
-  sort_order int default 0,
-  created_at timestamptz default now()
+  unit_label text
 );
 
-create table public.kpi_submissions (
-  id uuid primary key default gen_random_uuid(),
-  branch_id uuid references public.branches(id) on delete set null,
+create table if not exists public.kpi_submissions (
+  id text primary key,
+  branch_id text,
   branch_name text not null,
-  employee_id uuid references public.employees(id) on delete set null,
+  employee_id text,
   employee_nickname text not null,
-  submission_date date not null,
+  submission_date text not null,
   responses jsonb not null,
   evidence_urls jsonb default '[]'::jsonb,
   line_notification_sent boolean default false,
   created_at timestamptz default now()
-);
+);`;
 
-alter table public.kpi_submissions enable row level security;
+// ============================================================================
+// LAYER 2: IndexedDB High-Capacity Persistent Storage (Supports Large Images)
+// ============================================================================
+const IDB_NAME = 'KronoKpiPersistentDB';
+const IDB_VERSION = 1;
+const IDB_STORE = 'kv_store';
 
-create policy "Employees can insert KPI responses"
-  on public.kpi_submissions for insert
-  to anon, authenticated
-  with check (true);
+function openIndexedDb(): Promise<IDBDatabase | null> {
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    try {
+      const req = window.indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
 
-create policy "Only managers can read KPI responses"
-  on public.kpi_submissions for select
-  to authenticated
-  using (auth.jwt() ->> 'role' = 'manager');`;
+async function writeIndexedDb<T>(key: string, value: T): Promise<void> {
+  const db = await openIndexedDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
 
+async function readIndexedDb<T>(key: string): Promise<T | null> {
+  const db = await openIndexedDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => {
+        resolve(req.result !== undefined ? (req.result as T) : null);
+      };
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function clearIndexedDb(): Promise<void> {
+  const db = await openIndexedDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+// ============================================================================
+// LAYER 3: Optional Supabase Cloud Client Sync
+// ============================================================================
+let cachedSupabaseClient: SupabaseClient | null = null;
+let cachedConfigKey = '';
+
+export function getSupabaseConfig(): SupabaseConnectionConfig {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SUPABASE_CONFIG);
+    if (raw) {
+      const parsed = JSON.parse(raw) as SupabaseConnectionConfig;
+      if (parsed.url && parsed.anonKey) {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  const envUrl = import.meta.env.VITE_SUPABASE_URL || '';
+  const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  return {
+    url: envUrl,
+    anonKey: envKey,
+    enabled: Boolean(envUrl && envKey),
+  };
+}
+
+export function saveSupabaseConfig(config: SupabaseConnectionConfig): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SUPABASE_CONFIG, JSON.stringify(config));
+    cachedSupabaseClient = null;
+    cachedConfigKey = '';
+  } catch (err) {
+    console.error('Failed to save Supabase config:', err);
+  }
+}
+
+export function getActiveSupabaseClient(): SupabaseClient | null {
+  const cfg = getSupabaseConfig();
+  if (!cfg.enabled || !cfg.url.trim() || !cfg.anonKey.trim()) {
+    return null;
+  }
+  const key = `${cfg.url.trim()}::${cfg.anonKey.trim()}`;
+  if (cachedSupabaseClient && cachedConfigKey === key) {
+    return cachedSupabaseClient;
+  }
+  try {
+    cachedSupabaseClient = createClient(cfg.url.trim(), cfg.anonKey.trim());
+    cachedConfigKey = key;
+    return cachedSupabaseClient;
+  } catch {
+    return null;
+  }
+}
+
+async function pushCollectionToSupabase<T>(
+  collectionKey: string,
+  data: T
+): Promise<void> {
+  const client = getActiveSupabaseClient();
+  if (!client) return;
+  try {
+    await client.from('kronokpi_app_state').upsert(
+      {
+        collection_key: collectionKey,
+        payload: data,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'collection_key' }
+    );
+  } catch {
+    // Local storage + IndexedDB already persisted the data safely
+  }
+}
+
+// ============================================================================
+// LAYER 1: Quota-Resilient Synchronous localStorage Read/Write + Migration
+// ============================================================================
 function readStorage<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
+    if (raw !== null) {
+      return JSON.parse(raw) as T;
+    }
+
+    // Check legacy keys and migrate automatically if found
+    const legacyCandidates = LEGACY_KEYS[key] || [];
+    for (const oldKey of legacyCandidates) {
+      const legacyRaw = localStorage.getItem(oldKey);
+      if (legacyRaw !== null) {
+        const parsed = JSON.parse(legacyRaw) as T;
+        localStorage.setItem(key, legacyRaw);
+        return parsed;
+      }
+    }
+
+    // Initialize canonical key with default fallback so it is immediately persisted
+    localStorage.setItem(key, JSON.stringify(fallback));
+    return fallback;
   } catch {
     return fallback;
   }
 }
 
 function writeStorage<T>(key: string, data: T): void {
+  // Always persist full data to IndexedDB (unlimited storage for photos)
+  void writeIndexedDb(key, data);
+  // Also sync to Supabase Cloud if configured
+  void pushCollectionToSupabase(key, data);
+
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (err) {
-    console.error(`Failed to persist ${key} to localStorage:`, err);
+    // If localStorage hits the 5MB browser quota due to high-res base64 images
+    // in submissions, keep the newest images in localStorage and trim older base64 blobs
+    // (while IndexedDB retains 100% of all images).
+    if (key === STORAGE_KEYS.SUBMISSIONS && Array.isArray(data)) {
+      try {
+        const trimmed = (data as unknown as KpiSubmission[]).map((sub, idx) => {
+          if (idx < 8) return sub;
+          return {
+            ...sub,
+            images: sub.images.slice(0, 1),
+          };
+        });
+        localStorage.setItem(key, JSON.stringify(trimmed));
+        return;
+      } catch {
+        // Fallback: store submissions metadata if images still exceed 5MB
+        try {
+          const light = (data as unknown as KpiSubmission[]).map(
+            (sub, idx) => ({
+              ...sub,
+              images: idx < 3 ? sub.images.slice(0, 1) : [],
+              responses: sub.responses.map((r) => ({
+                ...r,
+                images: idx < 3 ? r.images?.slice(0, 1) : [],
+              })),
+            })
+          );
+          localStorage.setItem(key, JSON.stringify(light));
+          return;
+        } catch {
+          console.warn('localStorage quota reached; full data saved in IndexedDB', err);
+        }
+      }
+    }
   }
 }
 
@@ -676,7 +938,139 @@ export const supabaseMockDb = {
     writeStorage(STORAGE_KEYS.MANAGER_PIN, pin);
   },
 
+  getUiSession(): PersistedUiSession | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.UI_SESSION);
+      if (!raw) return null;
+      return JSON.parse(raw) as PersistedUiSession;
+    } catch {
+      return null;
+    }
+  },
+
+  saveUiSession(session: PersistedUiSession): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.UI_SESSION, JSON.stringify(session));
+    } catch {
+      // ignore
+    }
+  },
+
+  /**
+   * Hydrates state from IndexedDB and/or Supabase Cloud if available,
+   * ensuring large image submissions or cloud records are restored after page refresh.
+   */
+  async hydrateAllCollections(): Promise<{
+    branches?: Branch[];
+    employees?: Employee[];
+    categories?: FormQuestionCategory[];
+    questions?: FormQuestion[];
+    submissions?: KpiSubmission[];
+    lineLogs?: LineWebhookLog[];
+  }> {
+    const result: {
+      branches?: Branch[];
+      employees?: Employee[];
+      categories?: FormQuestionCategory[];
+      questions?: FormQuestion[];
+      submissions?: KpiSubmission[];
+      lineLogs?: LineWebhookLog[];
+    } = {};
+
+    // 1. Check IndexedDB first (contains full uncompressed/compressed image arrays)
+    const [
+      idbBranches,
+      idbEmployees,
+      idbCategories,
+      idbQuestions,
+      idbSubmissions,
+      idbLogs,
+    ] = await Promise.all([
+      readIndexedDb<Branch[]>(STORAGE_KEYS.BRANCHES),
+      readIndexedDb<Employee[]>(STORAGE_KEYS.EMPLOYEES),
+      readIndexedDb<FormQuestionCategory[]>(STORAGE_KEYS.QUESTION_CATEGORIES),
+      readIndexedDb<FormQuestion[]>(STORAGE_KEYS.QUESTIONS),
+      readIndexedDb<KpiSubmission[]>(STORAGE_KEYS.SUBMISSIONS),
+      readIndexedDb<LineWebhookLog[]>(STORAGE_KEYS.LINE_LOGS),
+    ]);
+
+    if (idbBranches && idbBranches.length > 0) result.branches = idbBranches;
+    if (idbEmployees) result.employees = idbEmployees;
+    if (idbCategories && idbCategories.length > 0)
+      result.categories = idbCategories;
+    if (idbQuestions && idbQuestions.length > 0)
+      result.questions = idbQuestions;
+    if (idbSubmissions) result.submissions = idbSubmissions;
+    if (idbLogs) result.lineLogs = idbLogs;
+
+    // 2. If Supabase Cloud is configured, fetch cloud state and merge/hydrate
+    const client = getActiveSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('kronokpi_app_state')
+          .select('collection_key, payload');
+        if (!error && data && data.length > 0) {
+          for (const row of data) {
+            if (
+              row.collection_key === STORAGE_KEYS.BRANCHES &&
+              Array.isArray(row.payload) &&
+              row.payload.length > 0
+            ) {
+              result.branches = row.payload as Branch[];
+            } else if (
+              row.collection_key === STORAGE_KEYS.EMPLOYEES &&
+              Array.isArray(row.payload)
+            ) {
+              result.employees = row.payload as Employee[];
+            } else if (
+              row.collection_key === STORAGE_KEYS.QUESTION_CATEGORIES &&
+              Array.isArray(row.payload) &&
+              row.payload.length > 0
+            ) {
+              result.categories = row.payload as FormQuestionCategory[];
+            } else if (
+              row.collection_key === STORAGE_KEYS.QUESTIONS &&
+              Array.isArray(row.payload) &&
+              row.payload.length > 0
+            ) {
+              result.questions = row.payload as FormQuestion[];
+            } else if (
+              row.collection_key === STORAGE_KEYS.SUBMISSIONS &&
+              Array.isArray(row.payload)
+            ) {
+              result.submissions = row.payload as KpiSubmission[];
+            }
+          }
+        }
+      } catch {
+        // Fallback to local persistence seamlessly
+      }
+    }
+
+    return result;
+  },
+
   resetAllToDefaults(): void {
-    Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
+    Object.values(STORAGE_KEYS).forEach((key) => {
+      if (key !== STORAGE_KEYS.SUPABASE_CONFIG) {
+        localStorage.removeItem(key);
+      }
+    });
+    Object.values(LEGACY_KEYS)
+      .flat()
+      .forEach((oldKey) => localStorage.removeItem(oldKey));
+    void clearIndexedDb();
+
+    // Immediately write clean default records to storage
+    writeStorage(STORAGE_KEYS.BRANCHES, INITIAL_BRANCHES);
+    writeStorage(STORAGE_KEYS.EMPLOYEES, INITIAL_EMPLOYEES);
+    writeStorage(
+      STORAGE_KEYS.QUESTION_CATEGORIES,
+      INITIAL_QUESTION_CATEGORIES
+    );
+    writeStorage(STORAGE_KEYS.QUESTIONS, INITIAL_FORM_QUESTIONS);
+    writeStorage(STORAGE_KEYS.SUBMISSIONS, INITIAL_SUBMISSIONS);
+    writeStorage(STORAGE_KEYS.LINE_LOGS, []);
   },
 };

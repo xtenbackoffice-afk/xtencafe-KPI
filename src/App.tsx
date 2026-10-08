@@ -7,7 +7,10 @@ import {
   KpiSubmission,
   LineWebhookLog,
 } from './types/kpi';
-import { supabaseMockDb } from './services/supabaseMockService';
+import {
+  supabaseMockDb,
+  STORAGE_KEYS,
+} from './services/supabaseMockService';
 import { sendLineNotification } from './services/lineNotificationService';
 import { Header, ActiveTab } from './components/Header';
 import { BranchSelector } from './components/BranchSelector';
@@ -39,18 +42,77 @@ export default function App() {
   );
   const [managerPin] = useState<string>(() => supabaseMockDb.getManagerPin());
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('branch_select');
-  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(
-    branches[0]?.id || null
+  // โหลดสถานะหน้าจอที่เปิดค้างไว้ล่าสุด (ป้องกันหน้าจอกระโดดกลับเมื่อกดรีเฟรชเบราว์เซอร์)
+  const initialUiSession = supabaseMockDb.getUiSession();
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(
+    () => initialUiSession?.activeTab || 'branch_select'
   );
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(() => {
+    const savedId = initialUiSession?.selectedBranchId;
+    if (savedId && branches.some((b) => b.id === savedId)) {
+      return savedId;
+    }
+    return branches[0]?.id || null;
+  });
   const [selectedEmployeeIdForForm, setSelectedEmployeeIdForForm] =
-    useState<string>('');
+    useState<string>(() => initialUiSession?.selectedEmployeeIdForForm || '');
 
   const [isManagerAuthenticated, setIsManagerAuthenticated] =
-    useState<boolean>(false);
+    useState<boolean>(() => Boolean(initialUiSession?.isManagerAuthenticated));
   const [isPinModalOpen, setIsPinModalOpen] = useState<boolean>(false);
   const [isCustomizerOpen, setIsCustomizerOpen] = useState<boolean>(false);
 
+  // Hydrate ข้อมูลจาก IndexedDB และ Supabase Cloud เมื่อเปิดแอปพลิเคชัน
+  useEffect(() => {
+    let isMounted = true;
+    supabaseMockDb.hydrateAllCollections().then((hydrated) => {
+      if (!isMounted) return;
+      if (hydrated.branches && hydrated.branches.length > 0) {
+        setBranches(hydrated.branches);
+      }
+      if (hydrated.employees) {
+        setEmployees(hydrated.employees);
+      }
+      if (hydrated.categories && hydrated.categories.length > 0) {
+        setCategories(hydrated.categories);
+      }
+      if (hydrated.questions && hydrated.questions.length > 0) {
+        setQuestions(hydrated.questions);
+      }
+      if (hydrated.submissions) {
+        setSubmissions(hydrated.submissions);
+      }
+      if (hydrated.lineLogs) {
+        setLineLogs(hydrated.lineLogs);
+      }
+    });
+
+    // ซิงก์ข้อมูลข้ามแท็บเบราว์เซอร์อัตโนมัติ (Cross-Tab Persistence Sync)
+    const handleStorageEvent = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEYS.BRANCHES) {
+        setBranches(supabaseMockDb.getBranches());
+      } else if (e.key === STORAGE_KEYS.EMPLOYEES) {
+        setEmployees(supabaseMockDb.getEmployees());
+      } else if (e.key === STORAGE_KEYS.QUESTION_CATEGORIES) {
+        setCategories(supabaseMockDb.getQuestionCategories());
+      } else if (e.key === STORAGE_KEYS.QUESTIONS) {
+        setQuestions(supabaseMockDb.getQuestions());
+      } else if (e.key === STORAGE_KEYS.SUBMISSIONS) {
+        setSubmissions(supabaseMockDb.getSubmissions());
+      } else if (e.key === STORAGE_KEYS.LINE_LOGS) {
+        setLineLogs(supabaseMockDb.getLineLogs());
+      }
+    };
+
+    window.addEventListener('storage', handleStorageEvent);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('storage', handleStorageEvent);
+    };
+  }, []);
+
+  // บันทึกสถานะข้อมูลทุกส่วนลงพื้นที่จัดเก็บถาวรทันทีที่มีการเปลี่ยนแปลง
   useEffect(() => {
     supabaseMockDb.saveBranches(branches);
   }, [branches]);
@@ -74,6 +136,21 @@ export default function App() {
   useEffect(() => {
     supabaseMockDb.saveLineLogs(lineLogs);
   }, [lineLogs]);
+
+  // บันทึกสถานะหน้าจอปัจจุบันเพื่อให้รีเฟรชหน้าเว็บแล้วยังอยู่ที่หน้าเดิม
+  useEffect(() => {
+    supabaseMockDb.saveUiSession({
+      activeTab,
+      selectedBranchId,
+      selectedEmployeeIdForForm,
+      isManagerAuthenticated,
+    });
+  }, [
+    activeTab,
+    selectedBranchId,
+    selectedEmployeeIdForForm,
+    isManagerAuthenticated,
+  ]);
 
   const currentBranch =
     branches.find((b) => b.id === selectedBranchId) || branches[0] || null;
@@ -102,7 +179,11 @@ export default function App() {
       addressSummary,
       createdAt: new Date().toISOString(),
     };
-    setBranches((prev) => [...prev, newBranch]);
+    setBranches((prev) => {
+      const next = [...prev, newBranch];
+      supabaseMockDb.saveBranches(next);
+      return next;
+    });
     setSelectedBranchId(newBranch.id);
     setSelectedEmployeeIdForForm('');
   };
@@ -111,15 +192,21 @@ export default function App() {
     branchId: string,
     patch: Partial<Omit<Branch, 'id' | 'createdAt'>>
   ) => {
-    setBranches((prev) =>
-      prev.map((b) => (b.id === branchId ? { ...b, ...patch } : b))
-    );
-    if (patch.name) {
-      setSubmissions((prev) =>
-        prev.map((s) =>
-          s.branchId === branchId ? { ...s, branchName: patch.name! } : s
-        )
+    setBranches((prev) => {
+      const next = prev.map((b) =>
+        b.id === branchId ? { ...b, ...patch } : b
       );
+      supabaseMockDb.saveBranches(next);
+      return next;
+    });
+    if (patch.name) {
+      setSubmissions((prev) => {
+        const next = prev.map((s) =>
+          s.branchId === branchId ? { ...s, branchName: patch.name! } : s
+        );
+        supabaseMockDb.saveSubmissions(next);
+        return next;
+      });
     }
   };
 
@@ -127,16 +214,21 @@ export default function App() {
     setBranches((prev) => {
       if (prev.length <= 1) return prev;
       const remaining = prev.filter((b) => b.id !== branchId);
+      supabaseMockDb.saveBranches(remaining);
       if (selectedBranchId === branchId) {
         setSelectedBranchId(remaining[0]?.id || null);
         setSelectedEmployeeIdForForm('');
       }
       return remaining;
     });
-    setEmployees((prev) => prev.filter((e) => e.branchId !== branchId));
+    setEmployees((prev) => {
+      const next = prev.filter((e) => e.branchId !== branchId);
+      supabaseMockDb.saveEmployees(next);
+      return next;
+    });
   };
 
-  // เพิ่มพนักงานด้วยชื่อเล่นเท่านั้น (ไม่มีตำแหน่งงาน)
+  // เพิ่มพนักงานด้วยชื่อเล่นเท่านั้น และบันทึกลง Storage ทันที
   const handleAddEmployee = (branchId: string, nickname: string): Employee => {
     const newEmp: Employee = {
       id: `emp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -144,15 +236,33 @@ export default function App() {
       name: nickname,
       createdAt: new Date().toISOString(),
     };
-    setEmployees((prev) => [...prev, newEmp]);
+    setEmployees((prev) => {
+      const next = [...prev, newEmp];
+      supabaseMockDb.saveEmployees(next);
+      return next;
+    });
     return newEmp;
   };
 
   const handleDeleteEmployee = (employeeId: string) => {
-    setEmployees((prev) => prev.filter((emp) => emp.id !== employeeId));
+    setEmployees((prev) => {
+      const next = prev.filter((emp) => emp.id !== employeeId);
+      supabaseMockDb.saveEmployees(next);
+      return next;
+    });
     if (selectedEmployeeIdForForm === employeeId) {
       setSelectedEmployeeIdForForm('');
     }
+  };
+
+  const handleSaveCategories = (updated: FormQuestionCategory[]) => {
+    setCategories(updated);
+    supabaseMockDb.saveQuestionCategories(updated);
+  };
+
+  const handleSaveQuestions = (updated: FormQuestion[]) => {
+    setQuestions(updated);
+    supabaseMockDb.saveQuestions(updated);
   };
 
   const handleKpiSubmit = async (
@@ -165,14 +275,28 @@ export default function App() {
       lineNotificationSent: true,
     };
 
+    // บันทึกคำตอบ KPI ลงฐานข้อมูลถาวรทันที (localStorage + IndexedDB + Supabase)
+    setSubmissions((prev) => {
+      const next = [newSubmission, ...prev];
+      supabaseMockDb.saveSubmissions(next);
+      return next;
+    });
+
     const webhookLog = await sendLineNotification(newSubmission);
 
-    setSubmissions((prev) => [newSubmission, ...prev]);
-    setLineLogs((prev) => [webhookLog, ...prev]);
+    setLineLogs((prev) => {
+      const next = [webhookLog, ...prev];
+      supabaseMockDb.saveLineLogs(next);
+      return next;
+    });
   };
 
   const handleDeleteSubmission = (submissionId: string) => {
-    setSubmissions((prev) => prev.filter((s) => s.id !== submissionId));
+    setSubmissions((prev) => {
+      const next = prev.filter((s) => s.id !== submissionId);
+      supabaseMockDb.saveSubmissions(next);
+      return next;
+    });
   };
 
   const handleResetDemoData = () => {
@@ -306,8 +430,8 @@ export default function App() {
             questions={questions}
             submissions={submissions}
             lineLogs={lineLogs}
-            onSaveCategories={(updated) => setCategories(updated)}
-            onSaveQuestions={(updated) => setQuestions(updated)}
+            onSaveCategories={handleSaveCategories}
+            onSaveQuestions={handleSaveQuestions}
             onAddBranch={handleAddBranch}
             onUpdateBranch={handleUpdateBranch}
             onDeleteBranch={handleDeleteBranch}
@@ -321,7 +445,7 @@ export default function App() {
       <footer className="border-t border-slate-200 bg-white mt-12">
         <div className="max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
           <span>
-            ระบบบริหารจัดการและแบบฟอร์มประเมิน KPI พนักงานหลายสาขา · เปิดใช้งานโหมดคุ้มครองความลับข้อมูลพนักงาน
+            ระบบบริหารจัดการและแบบฟอร์มประเมิน KPI พนักงานหลายสาขา · บันทึกข้อมูลถาวรอัตโนมัติ (LocalStorage / IndexedDB / Supabase)
           </span>
           <div className="flex items-center gap-4">
             <button
@@ -366,8 +490,8 @@ export default function App() {
         isOpen={isCustomizerOpen}
         categories={categories}
         questions={questions}
-        onSaveCategories={(updated) => setCategories(updated)}
-        onSaveQuestions={(updated) => setQuestions(updated)}
+        onSaveCategories={handleSaveCategories}
+        onSaveQuestions={handleSaveQuestions}
         onClose={() => setIsCustomizerOpen(false)}
       />
     </div>
