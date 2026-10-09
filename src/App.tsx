@@ -7,10 +7,7 @@ import {
   KpiSubmission,
   LineWebhookLog,
 } from './types/kpi';
-import {
-  supabaseMockDb,
-  STORAGE_KEYS,
-} from './services/supabaseMockService';
+import { supabaseMockDb } from './services/supabaseMockService';
 import { sendLineNotification } from './services/lineNotificationService';
 import { Header, ActiveTab } from './components/Header';
 import { BranchSelector } from './components/BranchSelector';
@@ -19,7 +16,7 @@ import { KpiSubmissionForm } from './components/KpiSubmissionForm';
 import { KpiTemplateCustomizer } from './components/KpiTemplateCustomizer';
 import { ManagerPinModal } from './components/ManagerPinModal';
 import { ManagerDashboard } from './components/ManagerDashboard';
-import { Building2 } from 'lucide-react';
+import { Building2, AlertCircle, X } from 'lucide-react';
 
 export default function App() {
   const [branches, setBranches] = useState<Branch[]>(() =>
@@ -40,9 +37,11 @@ export default function App() {
   const [lineLogs, setLineLogs] = useState<LineWebhookLog[]>(() =>
     supabaseMockDb.getLineLogs()
   );
-  const [managerPin] = useState<string>(() => supabaseMockDb.getManagerPin());
+  const [managerPin, setManagerPin] = useState<string>(() =>
+    supabaseMockDb.getManagerPin()
+  );
+  const [cloudErrorTh, setCloudErrorTh] = useState<string | null>(null);
 
-  // โหลดสถานะหน้าจอที่เปิดค้างไว้ล่าสุด (ป้องกันหน้าจอกระโดดกลับเมื่อกดรีเฟรชเบราว์เซอร์)
   const initialUiSession = supabaseMockDb.getUiSession();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>(
@@ -82,9 +81,11 @@ export default function App() {
     });
   };
 
-  // Hydrate ข้อมูลจาก IndexedDB และ Supabase Cloud เมื่อเปิดแอปพลิเคชัน
+  // เชื่อมต่อฐานข้อมูลคลาวด์แบบเรียลไทม์ (Firebase Firestore onSnapshot + Cross-Tab Sync)
   useEffect(() => {
     let isMounted = true;
+
+    // 1. Hydrate ข้อมูลจาก IndexedDB ทันทีระหว่างรอสตรีมจากคลาวด์
     supabaseMockDb.hydrateAllCollections().then((hydrated) => {
       if (!isMounted) return;
       if (hydrated.branches && hydrated.branches.length > 0) {
@@ -107,54 +108,60 @@ export default function App() {
       }
     });
 
-    // ซิงก์ข้อมูลข้ามแท็บเบราว์เซอร์อัตโนมัติ (Cross-Tab Persistence Sync)
-    const handleStorageEvent = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEYS.BRANCHES) {
-        setBranches(supabaseMockDb.getBranches());
-      } else if (e.key === STORAGE_KEYS.EMPLOYEES) {
-        setEmployees(supabaseMockDb.getEmployees());
-      } else if (e.key === STORAGE_KEYS.QUESTION_CATEGORIES) {
-        setCategories(supabaseMockDb.getQuestionCategories());
-      } else if (e.key === STORAGE_KEYS.QUESTIONS) {
-        setQuestions(supabaseMockDb.getQuestions());
-      } else if (e.key === STORAGE_KEYS.SUBMISSIONS) {
-        setSubmissions(supabaseMockDb.getSubmissions());
-      } else if (e.key === STORAGE_KEYS.LINE_LOGS) {
-        setLineLogs(supabaseMockDb.getLineLogs());
-      }
-    };
+    // 2. เปิดรับการอัปเดตแบบเรียลไทม์จาก Cloud Firestore และแท็บอื่นทันทีโดยไม่ต้องรีเฟรชหน้าเว็บ
+    const unsubscribeRealtime = supabaseMockDb.subscribeToRealtimeDatabase({
+      onBranchesChange: (nextBranches) => {
+        if (!isMounted) return;
+        setBranches(nextBranches);
+      },
+      onEmployeesChange: (nextEmployees) => {
+        if (!isMounted) return;
+        setEmployees(nextEmployees);
+      },
+      onCategoriesChange: (nextCategories) => {
+        if (!isMounted) return;
+        setCategories(nextCategories);
+      },
+      onQuestionsChange: (nextQuestions) => {
+        if (!isMounted) return;
+        setQuestions(nextQuestions);
+      },
+      onSubmissionsChange: (nextSubmissions) => {
+        if (!isMounted) return;
+        setSubmissions(nextSubmissions);
+      },
+      onLineLogsChange: (nextLogs) => {
+        if (!isMounted) return;
+        setLineLogs(nextLogs);
+      },
+      onManagerPinChange: (nextPin) => {
+        if (!isMounted) return;
+        setManagerPin(nextPin);
+      },
+      onConnectionStatusChange: (status, messageTh) => {
+        if (!isMounted) return;
+        if (status === 'connected') {
+          setCloudErrorTh(null);
+        } else if (status === 'error' && messageTh) {
+          setCloudErrorTh(messageTh);
+        }
+      },
+    });
 
-    window.addEventListener('storage', handleStorageEvent);
     return () => {
       isMounted = false;
-      window.removeEventListener('storage', handleStorageEvent);
+      unsubscribeRealtime();
     };
   }, []);
 
-  // บันทึกสถานะข้อมูลทุกส่วนลงพื้นที่จัดเก็บถาวรทันทีที่มีการเปลี่ยนแปลง
+  // ตรวจสอบให้สาขาที่เลือกอยู่ยังคงถูกต้องเมื่อรายการสาขาอัปเดตแบบเรียลไทม์
   useEffect(() => {
-    supabaseMockDb.saveBranches(branches);
-  }, [branches]);
-
-  useEffect(() => {
-    supabaseMockDb.saveEmployees(employees);
-  }, [employees]);
-
-  useEffect(() => {
-    supabaseMockDb.saveQuestionCategories(categories);
-  }, [categories]);
-
-  useEffect(() => {
-    supabaseMockDb.saveQuestions(questions);
-  }, [questions]);
-
-  useEffect(() => {
-    supabaseMockDb.saveSubmissions(submissions);
-  }, [submissions]);
-
-  useEffect(() => {
-    supabaseMockDb.saveLineLogs(lineLogs);
-  }, [lineLogs]);
+    if (branches.length === 0) return;
+    if (!selectedBranchId || !branches.some((b) => b.id === selectedBranchId)) {
+      setSelectedBranchId(branches[0].id);
+      setSelectedEmployeeIdForForm('');
+    }
+  }, [branches, selectedBranchId]);
 
   // บันทึกสถานะหน้าจอปัจจุบันเพื่อให้รีเฟรชหน้าเว็บแล้วยังอยู่ที่หน้าเดิม
   useEffect(() => {
@@ -205,31 +212,65 @@ export default function App() {
     });
     setSelectedBranchId(newBranch.id);
     setSelectedEmployeeIdForForm('');
+
+    void supabaseMockDb.createBranchInCloud(newBranch).catch(() => {
+      setCloudErrorTh(
+        'ไม่สามารถบันทึกข้อมูลสาขาใหม่ลงฐานข้อมูลคลาวด์ได้ในขณะนี้ ระบบได้สำรองข้อมูลไว้ในเครื่องเรียบร้อยแล้วครับ'
+      );
+    });
   };
 
   const handleUpdateBranch = (
     branchId: string,
     patch: Partial<Omit<Branch, 'id' | 'createdAt'>>
   ) => {
+    let updatedBranchObj: Branch | null = null;
     setBranches((prev) => {
-      const next = prev.map((b) =>
-        b.id === branchId ? { ...b, ...patch } : b
-      );
+      const next = prev.map((b) => {
+        if (b.id === branchId) {
+          updatedBranchObj = { ...b, ...patch };
+          return updatedBranchObj;
+        }
+        return b;
+      });
       supabaseMockDb.saveBranches(next);
       return next;
     });
+
+    let affectedSubs: KpiSubmission[] = [];
     if (patch.name) {
       setSubmissions((prev) => {
-        const next = prev.map((s) =>
-          s.branchId === branchId ? { ...s, branchName: patch.name! } : s
-        );
+        const next = prev.map((s) => {
+          if (s.branchId === branchId) {
+            const updatedSub = { ...s, branchName: patch.name! };
+            affectedSubs.push(updatedSub);
+            return updatedSub;
+          }
+          return s;
+        });
         supabaseMockDb.saveSubmissions(next);
         return next;
       });
     }
+
+    if (updatedBranchObj) {
+      void supabaseMockDb
+        .updateBranchInCloud(updatedBranchObj, affectedSubs)
+        .catch(() => {
+          setCloudErrorTh(
+            'ไม่สามารถซิงก์การแก้ไขข้อมูลสาขาไปยังฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
+          );
+        });
+    }
   };
 
   const handleDeleteBranch = (branchId: string) => {
+    if (branches.length <= 1) return;
+
+    const removedEmployeeIds = employees
+      .filter((e) => e.branchId === branchId)
+      .map((e) => e.id);
+
     setBranches((prev) => {
       if (prev.length <= 1) return prev;
       const remaining = prev.filter((b) => b.id !== branchId);
@@ -240,14 +281,22 @@ export default function App() {
       }
       return remaining;
     });
+
     setEmployees((prev) => {
       const next = prev.filter((e) => e.branchId !== branchId);
       supabaseMockDb.saveEmployees(next);
       return next;
     });
+
+    void supabaseMockDb
+      .deleteBranchInCloud(branchId, removedEmployeeIds)
+      .catch(() => {
+        setCloudErrorTh(
+          'ไม่สามารถลบข้อมูลสาขาบนฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
+        );
+      });
   };
 
-  // เพิ่มพนักงานด้วยชื่อเล่นเท่านั้น และบันทึกลง Storage ทันที
   const handleAddEmployee = (branchId: string, nickname: string): Employee => {
     const newEmp: Employee = {
       id: `emp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -260,6 +309,13 @@ export default function App() {
       supabaseMockDb.saveEmployees(next);
       return next;
     });
+
+    void supabaseMockDb.createEmployeeInCloud(newEmp).catch(() => {
+      setCloudErrorTh(
+        'ไม่สามารถบันทึกรายชื่อพนักงานลงฐานข้อมูลคลาวด์ได้ในขณะนี้ ระบบได้บันทึกไว้ในเครื่องเรียบร้อยแล้วครับ'
+      );
+    });
+
     return newEmp;
   };
 
@@ -272,16 +328,40 @@ export default function App() {
     if (selectedEmployeeIdForForm === employeeId) {
       setSelectedEmployeeIdForForm('');
     }
+
+    void supabaseMockDb.deleteEmployeeInCloud(employeeId).catch(() => {
+      setCloudErrorTh(
+        'ไม่สามารถลบรายชื่อพนักงานบนฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
+      );
+    });
   };
 
   const handleSaveCategories = (updated: FormQuestionCategory[]) => {
+    const previousIds = categories.map((c) => c.id);
     setCategories(updated);
     supabaseMockDb.saveQuestionCategories(updated);
+
+    void supabaseMockDb
+      .syncCategoriesInCloud(updated, previousIds)
+      .catch(() => {
+        setCloudErrorTh(
+          'ไม่สามารถบันทึกหมวดหมู่คำถามไปยังฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
+        );
+      });
   };
 
   const handleSaveQuestions = (updated: FormQuestion[]) => {
+    const previousIds = questions.map((q) => q.id);
     setQuestions(updated);
     supabaseMockDb.saveQuestions(updated);
+
+    void supabaseMockDb
+      .syncQuestionsInCloud(updated, previousIds)
+      .catch(() => {
+        setCloudErrorTh(
+          'ไม่สามารถบันทึกชุดคำถามไปยังฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
+        );
+      });
   };
 
   const handleKpiSubmit = async (
@@ -294,12 +374,20 @@ export default function App() {
       lineNotificationSent: true,
     };
 
-    // บันทึกคำตอบ KPI ลงฐานข้อมูลถาวรทันที (localStorage + IndexedDB + Supabase)
+    // บันทึกคำตอบ KPI ลงฐานข้อมูลคลาวด์แบบเรียลไทม์ทันที
     setSubmissions((prev) => {
       const next = [newSubmission, ...prev];
       supabaseMockDb.saveSubmissions(next);
       return next;
     });
+
+    try {
+      await supabaseMockDb.createSubmissionInCloud(newSubmission);
+    } catch {
+      setCloudErrorTh(
+        'บันทึกข้อมูลประเมิน KPI สำรองในเครื่องเรียบร้อยแล้ว (การเชื่อมต่อคลาวด์ขัดข้องชั่วคราว)'
+      );
+    }
 
     const webhookLog = await sendLineNotification(newSubmission);
 
@@ -307,6 +395,10 @@ export default function App() {
       const next = [webhookLog, ...prev];
       supabaseMockDb.saveLineLogs(next);
       return next;
+    });
+
+    void supabaseMockDb.createLineLogInCloud(webhookLog).catch(() => {
+      // Log stored in local mirror seamlessly
     });
   };
 
@@ -316,19 +408,42 @@ export default function App() {
       supabaseMockDb.saveSubmissions(next);
       return next;
     });
+
+    void supabaseMockDb.deleteSubmissionInCloud(submissionId).catch(() => {
+      setCloudErrorTh(
+        'ไม่สามารถลบรายการประเมิน KPI บนฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
+      );
+    });
   };
 
   const handleResetDemoData = () => {
-    supabaseMockDb.resetAllToDefaults();
-    const defaultBranches = supabaseMockDb.getBranches();
-    setBranches(defaultBranches);
-    setEmployees(supabaseMockDb.getEmployees());
-    setCategories(supabaseMockDb.getQuestionCategories());
-    setQuestions(supabaseMockDb.getQuestions());
-    setSubmissions(supabaseMockDb.getSubmissions());
-    setLineLogs([]);
-    setSelectedBranchId(defaultBranches[0]?.id || null);
-    setSelectedEmployeeIdForForm('');
+    const snapshotBeforeReset = {
+      branches,
+      employees,
+      categories,
+      questions,
+      submissions,
+      lineLogs,
+    };
+
+    void supabaseMockDb
+      .resetAllToDefaultsInCloud(snapshotBeforeReset)
+      .then(() => {
+        const defaultBranches = supabaseMockDb.getBranches();
+        setBranches(defaultBranches);
+        setEmployees(supabaseMockDb.getEmployees());
+        setCategories(supabaseMockDb.getQuestionCategories());
+        setQuestions(supabaseMockDb.getQuestions());
+        setSubmissions(supabaseMockDb.getSubmissions());
+        setLineLogs([]);
+        setSelectedBranchId(defaultBranches[0]?.id || null);
+        setSelectedEmployeeIdForForm('');
+      })
+      .catch(() => {
+        setCloudErrorTh(
+          'เกิดข้อผิดพลาดขณะรีเซ็ตข้อมูลเริ่มต้นบนฐานข้อมูลคลาวด์ครับ'
+        );
+      });
   };
 
   return (
@@ -373,6 +488,26 @@ export default function App() {
           )
         }
       />
+
+      {/* Polite Thai Cloud Database Error Notification Banner */}
+      {cloudErrorTh && (
+        <div className="max-w-[1360px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-xl text-xs font-medium flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>{cloudErrorTh}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCloudErrorTh(null)}
+              className="p-1 text-amber-700 hover:text-amber-900 rounded cursor-pointer"
+              aria-label="ปิดการแจ้งเตือน"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Viewport */}
       <main className="flex-1">

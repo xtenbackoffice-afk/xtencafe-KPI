@@ -1,9 +1,30 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
+import {
+  db,
+  WORKSPACE_ID,
+  OperationType,
+  handleFirestoreError,
+} from '../firebase';
+import {
   Branch,
   Employee,
   FormQuestionCategory,
   FormQuestion,
+  FormQuestionResponse,
+  UploadedEvidence,
   KpiSubmission,
   LineWebhookLog,
 } from '../types/kpi';
@@ -25,7 +46,6 @@ export const STORAGE_KEYS = {
   SUPABASE_CONFIG: 'kronokpi_persistent_supabase_config',
 };
 
-// Legacy keys from previous versions for seamless migration
 const LEGACY_KEYS: Record<string, string[]> = {
   [STORAGE_KEYS.BRANCHES]: [
     'kronokpi_supabase_branches_v5_cat_th',
@@ -71,6 +91,17 @@ export interface SupabaseConnectionConfig {
   enabled: boolean;
 }
 
+export interface RealtimeDatabaseCallbacks {
+  onBranchesChange?: (branches: Branch[]) => void;
+  onEmployeesChange?: (employees: Employee[]) => void;
+  onCategoriesChange?: (categories: FormQuestionCategory[]) => void;
+  onQuestionsChange?: (questions: FormQuestion[]) => void;
+  onSubmissionsChange?: (submissions: KpiSubmission[]) => void;
+  onLineLogsChange?: (logs: LineWebhookLog[]) => void;
+  onManagerPinChange?: (pin: string) => void;
+  onConnectionStatusChange?: (status: 'connecting' | 'connected' | 'error', messageTh?: string) => void;
+}
+
 export const SAMPLE_PROOF_ASSETS = [
   {
     label: 'ใบสรุปยอดขายเครื่อง POS',
@@ -110,7 +141,7 @@ export const INITIAL_BRANCHES: Branch[] = [
     code: 'BKK-SKV',
     district: 'เขตวัฒนา กรุงเทพฯ',
     addressSummary: '392 สุขุมวิท ซอย 24 แขวงคลองตัน',
-    createdAt: '2026-01-10T08:00:00.000Z',
+    createdAt: '2026-01-10T08:01:00.000Z',
   },
   {
     id: 'branch_silom',
@@ -118,7 +149,7 @@ export const INITIAL_BRANCHES: Branch[] = [
     code: 'BKK-SLM',
     district: 'เขตบางรัก กรุงเทพฯ',
     addressSummary: '191 อาคารสีลมคอมเพล็กซ์ ชั้น 2',
-    createdAt: '2026-01-10T08:00:00.000Z',
+    createdAt: '2026-01-10T08:02:00.000Z',
   },
   {
     id: 'branch_thonglor',
@@ -130,7 +161,6 @@ export const INITIAL_BRANCHES: Branch[] = [
   },
 ];
 
-// รายชื่อพนักงานระบุเฉพาะ "ชื่อเล่น" (ไม่มีตำแหน่งงาน)
 export const INITIAL_EMPLOYEES: Employee[] = [
   {
     id: 'emp_rm3_1',
@@ -194,7 +224,6 @@ export const INITIAL_EMPLOYEES: Employee[] = [
   },
 ];
 
-// หมวดหมู่คำถาม (Categorized Form Sections)
 export const INITIAL_QUESTION_CATEGORIES: FormQuestionCategory[] = [
   {
     id: 'cat_sales',
@@ -213,7 +242,6 @@ export const INITIAL_QUESTION_CATEGORIES: FormQuestionCategory[] = [
   },
 ];
 
-// คำถามแบบ Google Forms ที่จัดกลุ่มตามหมวดหมู่ (Category)
 export const INITIAL_FORM_QUESTIONS: FormQuestion[] = [
   {
     id: 'q_sales_today',
@@ -579,8 +607,8 @@ export const INITIAL_SUBMISSIONS: KpiSubmission[] = [
   },
 ];
 
-export const SUPABASE_SQL_SCHEMA = `-- โครงสร้างฐานข้อมูล PostgreSQL สำหรับระบบแบบฟอร์ม KPI พนักงานแบบแบ่งหมวดหมู่ (Supabase)
--- คัดลอกคำสั่งนี้ไปรันในเมนู SQL Editor ของโปรเจกต์ Supabase ของคุณ
+export const SUPABASE_SQL_SCHEMA = `-- ระบบฐานข้อมูลคลาวด์เรียลไทม์ (Firebase Firestore + Supabase PostgreSQL)
+-- ข้อมูลทั้งหมดถูกซิงก์แบบเรียลไทม์ผ่าน Cloud Firestore อัตโนมัติ
 
 create table if not exists public.kronokpi_app_state (
   collection_key text primary key,
@@ -594,58 +622,276 @@ create policy "Allow public read/write on kronokpi_app_state"
   on public.kronokpi_app_state for all
   to anon, authenticated
   using (true)
-  with check (true);
-
--- ตารางเชิงสัมพันธ์เพิ่มเติมสำหรับใช้ Query รายงานขั้นสูง
-create table if not exists public.branches (
-  id text primary key,
-  name text not null,
-  code text not null,
-  district text not null,
-  address_summary text,
-  created_at timestamptz default now()
-);
-
-create table if not exists public.employees (
-  id text primary key,
-  branch_id text references public.branches(id) on delete cascade,
-  nickname text not null,
-  created_at timestamptz default now()
-);
-
-create table if not exists public.form_categories (
-  id text primary key,
-  name text not null,
-  description text,
-  created_at timestamptz default now()
-);
-
-create table if not exists public.form_questions (
-  id text primary key,
-  category_id text references public.form_categories(id) on delete cascade,
-  title text not null,
-  description text,
-  question_type text not null,
-  required boolean default true,
-  max_score numeric,
-  unit_label text
-);
-
-create table if not exists public.kpi_submissions (
-  id text primary key,
-  branch_id text,
-  branch_name text not null,
-  employee_id text,
-  employee_nickname text not null,
-  submission_date text not null,
-  responses jsonb not null,
-  evidence_urls jsonb default '[]'::jsonb,
-  line_notification_sent boolean default false,
-  created_at timestamptz default now()
-);`;
+  with check (true);`;
 
 // ============================================================================
-// LAYER 2: IndexedDB High-Capacity Persistent Storage (Supports Large Images)
+// DEFENSIVE PAYLOAD SANITIZERS (Matches firebase-blueprint.json & firestore.rules)
+// ============================================================================
+function sanitizeId(rawId: string, prefix = 'id'): string {
+  const cleaned = String(rawId || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 128);
+  return cleaned.length > 0 ? cleaned : `${prefix}_${Date.now()}`;
+}
+
+function sanitizeString(val: unknown, maxLen: number, fallback = ''): string {
+  const str = typeof val === 'string' ? val.trim() : String(val ?? '').trim();
+  const effective = str.length > 0 ? str : fallback;
+  return effective.slice(0, maxLen);
+}
+
+function toFirestoreBranch(branch: Branch): Record<string, unknown> {
+  const id = sanitizeId(branch.id, 'branch');
+  return {
+    id,
+    workspaceId: WORKSPACE_ID,
+    name: sanitizeString(branch.name, 200, 'สาขามาตรฐาน'),
+    code: sanitizeString(branch.code, 64, 'BKK-001'),
+    district: sanitizeString(branch.district, 200, 'กรุงเทพมหานคร'),
+    addressSummary: sanitizeString(
+      branch.addressSummary,
+      500,
+      'จุดให้บริการหน้าร้านมาตรฐาน'
+    ),
+    createdAt: sanitizeString(
+      branch.createdAt,
+      64,
+      new Date().toISOString()
+    ),
+  };
+}
+
+function toFirestoreEmployee(emp: Employee): Record<string, unknown> {
+  const id = sanitizeId(emp.id, 'emp');
+  return {
+    id,
+    workspaceId: WORKSPACE_ID,
+    branchId: sanitizeId(emp.branchId, 'branch'),
+    name: sanitizeString(emp.name, 120, 'พนักงาน'),
+    createdAt: sanitizeString(emp.createdAt, 64, new Date().toISOString()),
+  };
+}
+
+function toFirestoreCategory(
+  cat: FormQuestionCategory,
+  sortOrder: number
+): Record<string, unknown> {
+  const id = sanitizeId(cat.id, 'cat');
+  const payload: Record<string, unknown> = {
+    id,
+    workspaceId: WORKSPACE_ID,
+    name: sanitizeString(cat.name, 200, 'หมวดหมู่คำถาม'),
+    sortOrder: Number.isFinite(sortOrder) ? Math.max(0, Math.min(10000, sortOrder)) : 0,
+  };
+  if (cat.description && cat.description.trim().length > 0) {
+    payload.description = cat.description.trim().slice(0, 500);
+  }
+  return payload;
+}
+
+function toFirestoreQuestion(
+  q: FormQuestion,
+  sortOrder: number
+): Record<string, unknown> {
+  const id = sanitizeId(q.id, 'q');
+  const payload: Record<string, unknown> = {
+    id,
+    workspaceId: WORKSPACE_ID,
+    title: sanitizeString(q.title, 400, 'คำถามประเมิน KPI'),
+    type: q.type,
+    required: Boolean(q.required),
+    sortOrder: Number.isFinite(sortOrder) ? Math.max(0, Math.min(10000, sortOrder)) : 0,
+  };
+
+  if (q.categoryId && q.categoryId.trim().length > 0) {
+    payload.categoryId = sanitizeId(q.categoryId, 'cat');
+  }
+  if (q.description && q.description.trim().length > 0) {
+    payload.description = q.description.trim().slice(0, 600);
+  }
+  if (Array.isArray(q.options) && q.options.length > 0) {
+    payload.options = q.options
+      .slice(0, 50)
+      .map((opt) => sanitizeString(opt, 200, 'ตัวเลือก'));
+  }
+  if (Array.isArray(q.rows) && q.rows.length > 0) {
+    payload.rows = q.rows
+      .slice(0, 50)
+      .map((r) => sanitizeString(r, 200, 'รายการ'));
+  }
+  if (Array.isArray(q.columns) && q.columns.length > 0) {
+    payload.columns = q.columns
+      .slice(0, 50)
+      .map((c) => sanitizeString(c, 200, 'ตัวเลือก'));
+  }
+  if (typeof q.scaleMin === 'number' && Number.isFinite(q.scaleMin)) {
+    payload.scaleMin = q.scaleMin;
+  }
+  if (typeof q.scaleMax === 'number' && Number.isFinite(q.scaleMax)) {
+    payload.scaleMax = q.scaleMax;
+  }
+  if (q.scaleMinLabel && q.scaleMinLabel.trim().length > 0) {
+    payload.scaleMinLabel = q.scaleMinLabel.trim().slice(0, 120);
+  }
+  if (q.scaleMaxLabel && q.scaleMaxLabel.trim().length > 0) {
+    payload.scaleMaxLabel = q.scaleMaxLabel.trim().slice(0, 120);
+  }
+  if (typeof q.maxScore === 'number' && Number.isFinite(q.maxScore)) {
+    payload.maxScore = q.maxScore;
+  }
+  if (q.unitLabel && q.unitLabel.trim().length > 0) {
+    payload.unitLabel = q.unitLabel.trim().slice(0, 64);
+  }
+  return payload;
+}
+
+function cleanUploadedEvidence(img: UploadedEvidence): Record<string, unknown> {
+  return {
+    id: sanitizeId(img.id, 'img'),
+    fileName: sanitizeString(img.fileName, 200, 'image.jpg'),
+    fileSize: typeof img.fileSize === 'number' && Number.isFinite(img.fileSize) ? img.fileSize : 0,
+    mimeType: sanitizeString(img.mimeType, 64, 'image/jpeg'),
+    dataUrl: typeof img.dataUrl === 'string' ? img.dataUrl : '',
+  };
+}
+
+function cleanResponseItem(resp: FormQuestionResponse): Record<string, unknown> {
+  const item: Record<string, unknown> = {
+    questionId: sanitizeId(resp.questionId, 'q'),
+    questionTitle: sanitizeString(resp.questionTitle, 400, 'คำถาม'),
+    questionType: resp.questionType,
+  };
+  if (resp.categoryId) item.categoryId = sanitizeId(resp.categoryId, 'cat');
+  if (resp.categoryName) item.categoryName = sanitizeString(resp.categoryName, 200, 'ทั่วไป');
+  if (resp.textValue !== undefined) item.textValue = String(resp.textValue).slice(0, 5000);
+  if (typeof resp.numberValue === 'number' && Number.isFinite(resp.numberValue)) {
+    item.numberValue = resp.numberValue;
+  }
+  if (Array.isArray(resp.choiceValues)) {
+    item.choiceValues = resp.choiceValues.slice(0, 50).map((c) => String(c).slice(0, 300));
+  }
+  if (resp.gridValues && typeof resp.gridValues === 'object') {
+    const cleanGrid: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(resp.gridValues)) {
+      if (Array.isArray(v)) {
+        cleanGrid[k.slice(0, 200)] = v.slice(0, 50).map((x) => String(x).slice(0, 200));
+      }
+    }
+    item.gridValues = cleanGrid;
+  }
+  if (Array.isArray(resp.images)) {
+    item.images = resp.images.slice(0, 10).map(cleanUploadedEvidence);
+  }
+  if (typeof resp.maxScore === 'number' && Number.isFinite(resp.maxScore)) {
+    item.maxScore = resp.maxScore;
+  }
+  if (resp.unitLabel) {
+    item.unitLabel = sanitizeString(resp.unitLabel, 64, '');
+  }
+  return item;
+}
+
+function toFirestoreSubmission(sub: KpiSubmission): Record<string, unknown> {
+  const id = sanitizeId(sub.id, 'sub');
+  const cleanedResponses = (sub.responses || [])
+    .slice(0, 50)
+    .map(cleanResponseItem);
+  const cleanedImages = (sub.images || [])
+    .slice(0, 15)
+    .map(cleanUploadedEvidence);
+
+  const candidate = {
+    id,
+    workspaceId: WORKSPACE_ID,
+    branchId: sanitizeId(sub.branchId, 'branch'),
+    branchName: sanitizeString(sub.branchName, 200, 'สาขา'),
+    employeeId: sanitizeId(sub.employeeId, 'emp'),
+    employeeName: sanitizeString(sub.employeeName, 120, 'พนักงาน'),
+    submissionDate: sanitizeString(
+      sub.submissionDate,
+      32,
+      new Date().toISOString().split('T')[0]
+    ),
+    createdAt: sanitizeString(sub.createdAt, 64, new Date().toISOString()),
+    responses: cleanedResponses,
+    images: cleanedImages,
+    lineNotificationSent: Boolean(sub.lineNotificationSent),
+  };
+
+  // Guard against Firestore 1MB document limit when multiple high-res images are attached
+  const serializedSize = JSON.stringify(candidate).length;
+  if (serializedSize > 850_000) {
+    return {
+      ...candidate,
+      images: cleanedImages.slice(0, 4),
+      responses: cleanedResponses.map((r) =>
+        Array.isArray(r.images) ? { ...r, images: (r.images as unknown[]).slice(0, 4) } : r
+      ),
+    };
+  }
+  return candidate;
+}
+
+function toFirestoreLineLog(log: LineWebhookLog): Record<string, unknown> {
+  const id = sanitizeId(log.id, 'log');
+  const validStatus =
+    log.status === 'dispatched' ||
+    log.status === 'simulated_ok' ||
+    log.status === 'error'
+      ? log.status
+      : 'simulated_ok';
+  const payload: Record<string, unknown> = {
+    id,
+    workspaceId: WORKSPACE_ID,
+    submissionId: sanitizeId(log.submissionId, 'sub'),
+    timestamp: sanitizeString(log.timestamp, 64, new Date().toISOString()),
+    branchName: sanitizeString(log.branchName, 200, 'สาขา'),
+    employeeName: sanitizeString(log.employeeName, 120, 'พนักงาน'),
+    messagePreview: sanitizeString(log.messagePreview, 5000, 'แจ้งเตือนการส่ง KPI'),
+    status: validStatus,
+  };
+  if (log.statusMessageTh) {
+    payload.statusMessageTh = sanitizeString(log.statusMessageTh, 1000, '');
+  }
+  if (log.endpointUrl) {
+    payload.endpointUrl = sanitizeString(log.endpointUrl, 300, '');
+  }
+  return payload;
+}
+
+// ============================================================================
+// CROSS-TAB BROADCAST CHANNEL FOR INSTANT 0ms SAME-BROWSER SYNC
+// ============================================================================
+const BROADCAST_CHANNEL_NAME = 'xtencafe_kpi_realtime_channel_v1';
+let broadcastChannel: BroadcastChannel | null = null;
+
+function getBroadcastChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+  if (!broadcastChannel) {
+    try {
+      broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+    } catch {
+      return null;
+    }
+  }
+  return broadcastChannel;
+}
+
+function notifyBroadcastChannel(key: string): void {
+  const channel = getBroadcastChannel();
+  if (channel) {
+    try {
+      channel.postMessage({ key, timestamp: Date.now() });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+// ============================================================================
+// LAYER 2: IndexedDB High-Capacity Persistent Storage
 // ============================================================================
 const IDB_NAME = 'KronoKpiPersistentDB';
 const IDB_VERSION = 1;
@@ -659,9 +905,9 @@ function openIndexedDb(): Promise<IDBDatabase | null> {
     try {
       const req = window.indexedDB.open(IDB_NAME, IDB_VERSION);
       req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(IDB_STORE)) {
-          db.createObjectStore(IDB_STORE);
+        const idb = req.result;
+        if (!idb.objectStoreNames.contains(IDB_STORE)) {
+          idb.createObjectStore(IDB_STORE);
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -673,11 +919,11 @@ function openIndexedDb(): Promise<IDBDatabase | null> {
 }
 
 async function writeIndexedDb<T>(key: string, value: T): Promise<void> {
-  const db = await openIndexedDb();
-  if (!db) return;
+  const idb = await openIndexedDb();
+  if (!idb) return;
   return new Promise((resolve) => {
     try {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const tx = idb.transaction(IDB_STORE, 'readwrite');
       const store = tx.objectStore(IDB_STORE);
       store.put(value, key);
       tx.oncomplete = () => resolve();
@@ -689,11 +935,11 @@ async function writeIndexedDb<T>(key: string, value: T): Promise<void> {
 }
 
 async function readIndexedDb<T>(key: string): Promise<T | null> {
-  const db = await openIndexedDb();
-  if (!db) return null;
+  const idb = await openIndexedDb();
+  if (!idb) return null;
   return new Promise((resolve) => {
     try {
-      const tx = db.transaction(IDB_STORE, 'readonly');
+      const tx = idb.transaction(IDB_STORE, 'readonly');
       const store = tx.objectStore(IDB_STORE);
       const req = store.get(key);
       req.onsuccess = () => {
@@ -707,11 +953,11 @@ async function readIndexedDb<T>(key: string): Promise<T | null> {
 }
 
 async function clearIndexedDb(): Promise<void> {
-  const db = await openIndexedDb();
-  if (!db) return;
+  const idb = await openIndexedDb();
+  if (!idb) return;
   return new Promise((resolve) => {
     try {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const tx = idb.transaction(IDB_STORE, 'readwrite');
       const store = tx.objectStore(IDB_STORE);
       store.clear();
       tx.oncomplete = () => resolve();
@@ -793,12 +1039,12 @@ async function pushCollectionToSupabase<T>(
       { onConflict: 'collection_key' }
     );
   } catch {
-    // Local storage + IndexedDB already persisted the data safely
+    // ignore
   }
 }
 
 // ============================================================================
-// LAYER 1: Quota-Resilient Synchronous localStorage Read/Write + Migration
+// LAYER 1: Quota-Resilient Synchronous localStorage Mirror
 // ============================================================================
 function readStorage<T>(key: string, fallback: T): T {
   try {
@@ -807,7 +1053,6 @@ function readStorage<T>(key: string, fallback: T): T {
       return JSON.parse(raw) as T;
     }
 
-    // Check legacy keys and migrate automatically if found
     const legacyCandidates = LEGACY_KEYS[key] || [];
     for (const oldKey of legacyCandidates) {
       const legacyRaw = localStorage.getItem(oldKey);
@@ -818,7 +1063,6 @@ function readStorage<T>(key: string, fallback: T): T {
       }
     }
 
-    // Initialize canonical key with default fallback so it is immediately persisted
     localStorage.setItem(key, JSON.stringify(fallback));
     return fallback;
   } catch {
@@ -826,50 +1070,138 @@ function readStorage<T>(key: string, fallback: T): T {
   }
 }
 
-function writeStorage<T>(key: string, data: T): void {
-  // Always persist full data to IndexedDB (unlimited storage for photos)
+function writeLocalMirror<T>(key: string, data: T, broadcast = true): void {
   void writeIndexedDb(key, data);
-  // Also sync to Supabase Cloud if configured
   void pushCollectionToSupabase(key, data);
 
   try {
     localStorage.setItem(key, JSON.stringify(data));
-  } catch (err) {
-    // If localStorage hits the 5MB browser quota due to high-res base64 images
-    // in submissions, keep the newest images in localStorage and trim older base64 blobs
-    // (while IndexedDB retains 100% of all images).
+  } catch {
     if (key === STORAGE_KEYS.SUBMISSIONS && Array.isArray(data)) {
       try {
-        const trimmed = (data as unknown as KpiSubmission[]).map((sub, idx) => {
-          if (idx < 8) return sub;
-          return {
-            ...sub,
-            images: sub.images.slice(0, 1),
-          };
-        });
-        localStorage.setItem(key, JSON.stringify(trimmed));
-        return;
+        const light = (data as unknown as KpiSubmission[]).map((sub, idx) => ({
+          ...sub,
+          images: idx < 4 ? sub.images.slice(0, 1) : [],
+          responses: sub.responses.map((r) => ({
+            ...r,
+            images: idx < 4 ? r.images?.slice(0, 1) : [],
+          })),
+        }));
+        localStorage.setItem(key, JSON.stringify(light));
       } catch {
-        // Fallback: store submissions metadata if images still exceed 5MB
-        try {
-          const light = (data as unknown as KpiSubmission[]).map(
-            (sub, idx) => ({
-              ...sub,
-              images: idx < 3 ? sub.images.slice(0, 1) : [],
-              responses: sub.responses.map((r) => ({
-                ...r,
-                images: idx < 3 ? r.images?.slice(0, 1) : [],
-              })),
-            })
-          );
-          localStorage.setItem(key, JSON.stringify(light));
-          return;
-        } catch {
-          console.warn('localStorage quota reached; full data saved in IndexedDB', err);
-        }
+        // IndexedDB and Cloud Firestore hold the full dataset
       }
     }
   }
+
+  if (broadcast) {
+    notifyBroadcastChannel(key);
+  }
+}
+
+// ============================================================================
+// LAYER 0: REAL-TIME FIREBASE FIRESTORE CLOUD SYNC ENGINE
+// ============================================================================
+let initialSeedPromise: Promise<void> | null = null;
+
+export async function ensureFirestoreWorkspaceSeeded(): Promise<void> {
+  if (initialSeedPromise) {
+    return initialSeedPromise;
+  }
+
+  initialSeedPromise = (async () => {
+    const metaPath = 'appSettings/workspace_meta';
+    try {
+      const metaRef = doc(db, 'appSettings', 'workspace_meta');
+      const metaSnap = await getDoc(metaRef);
+
+      if (metaSnap.exists() && metaSnap.data()?.seeded === true) {
+        return;
+      }
+
+      // Check if branches already exist in Firestore
+      const branchesQuery = query(
+        collection(db, 'branches'),
+        where('workspaceId', '==', WORKSPACE_ID)
+      );
+      const branchesSnap = await getDocs(branchesQuery);
+
+      if (!branchesSnap.empty) {
+        await setDoc(metaRef, {
+          id: 'workspace_meta',
+          workspaceId: WORKSPACE_ID,
+          managerPin: readStorage<string>(STORAGE_KEYS.MANAGER_PIN, '1234'),
+          seeded: true,
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Seed initial data from local storage (if previously customized) or defaults
+      const seedBranches = readStorage<Branch[]>(
+        STORAGE_KEYS.BRANCHES,
+        INITIAL_BRANCHES
+      );
+      const seedEmployees = readStorage<Employee[]>(
+        STORAGE_KEYS.EMPLOYEES,
+        INITIAL_EMPLOYEES
+      );
+      const seedCategories = readStorage<FormQuestionCategory[]>(
+        STORAGE_KEYS.QUESTION_CATEGORIES,
+        INITIAL_QUESTION_CATEGORIES
+      );
+      const seedQuestions = readStorage<FormQuestion[]>(
+        STORAGE_KEYS.QUESTIONS,
+        INITIAL_FORM_QUESTIONS
+      );
+      const seedSubmissions = readStorage<KpiSubmission[]>(
+        STORAGE_KEYS.SUBMISSIONS,
+        INITIAL_SUBMISSIONS
+      );
+      const seedPin = readStorage<string>(STORAGE_KEYS.MANAGER_PIN, '1234');
+
+      const batch = writeBatch(db);
+
+      for (const b of seedBranches) {
+        const clean = toFirestoreBranch(b);
+        batch.set(doc(db, 'branches', String(clean.id)), clean);
+      }
+
+      for (const emp of seedEmployees) {
+        const clean = toFirestoreEmployee(emp);
+        batch.set(doc(db, 'employees', String(clean.id)), clean);
+      }
+
+      seedCategories.forEach((cat, idx) => {
+        const clean = toFirestoreCategory(cat, idx);
+        batch.set(doc(db, 'formCategories', String(clean.id)), clean);
+      });
+
+      seedQuestions.forEach((q, idx) => {
+        const clean = toFirestoreQuestion(q, idx);
+        batch.set(doc(db, 'formQuestions', String(clean.id)), clean);
+      });
+
+      for (const sub of seedSubmissions) {
+        const clean = toFirestoreSubmission(sub);
+        batch.set(doc(db, 'kpiSubmissions', String(clean.id)), clean);
+      }
+
+      batch.set(metaRef, {
+        id: 'workspace_meta',
+        workspaceId: WORKSPACE_ID,
+        managerPin: /^\d{4,16}$/.test(seedPin) ? seedPin : '1234',
+        seeded: true,
+        updatedAt: new Date().toISOString(),
+      });
+
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, metaPath);
+    }
+  })();
+
+  return initialSeedPromise;
 }
 
 export const supabaseMockDb = {
@@ -878,7 +1210,7 @@ export const supabaseMockDb = {
   },
 
   saveBranches(branches: Branch[]): void {
-    writeStorage(STORAGE_KEYS.BRANCHES, branches);
+    writeLocalMirror(STORAGE_KEYS.BRANCHES, branches);
   },
 
   getEmployees(): Employee[] {
@@ -886,7 +1218,7 @@ export const supabaseMockDb = {
   },
 
   saveEmployees(employees: Employee[]): void {
-    writeStorage(STORAGE_KEYS.EMPLOYEES, employees);
+    writeLocalMirror(STORAGE_KEYS.EMPLOYEES, employees);
   },
 
   getQuestionCategories(): FormQuestionCategory[] {
@@ -897,7 +1229,7 @@ export const supabaseMockDb = {
   },
 
   saveQuestionCategories(categories: FormQuestionCategory[]): void {
-    writeStorage(STORAGE_KEYS.QUESTION_CATEGORIES, categories);
+    writeLocalMirror(STORAGE_KEYS.QUESTION_CATEGORIES, categories);
   },
 
   getQuestions(): FormQuestion[] {
@@ -908,7 +1240,7 @@ export const supabaseMockDb = {
   },
 
   saveQuestions(questions: FormQuestion[]): void {
-    writeStorage(STORAGE_KEYS.QUESTIONS, questions);
+    writeLocalMirror(STORAGE_KEYS.QUESTIONS, questions);
   },
 
   getSubmissions(): KpiSubmission[] {
@@ -919,7 +1251,7 @@ export const supabaseMockDb = {
   },
 
   saveSubmissions(submissions: KpiSubmission[]): void {
-    writeStorage(STORAGE_KEYS.SUBMISSIONS, submissions);
+    writeLocalMirror(STORAGE_KEYS.SUBMISSIONS, submissions);
   },
 
   getLineLogs(): LineWebhookLog[] {
@@ -927,7 +1259,7 @@ export const supabaseMockDb = {
   },
 
   saveLineLogs(logs: LineWebhookLog[]): void {
-    writeStorage(STORAGE_KEYS.LINE_LOGS, logs);
+    writeLocalMirror(STORAGE_KEYS.LINE_LOGS, logs);
   },
 
   getManagerPin(): string {
@@ -935,7 +1267,17 @@ export const supabaseMockDb = {
   },
 
   saveManagerPin(pin: string): void {
-    writeStorage(STORAGE_KEYS.MANAGER_PIN, pin);
+    writeLocalMirror(STORAGE_KEYS.MANAGER_PIN, pin);
+    const cleanPin = /^\d{4,16}$/.test(pin) ? pin : '1234';
+    void setDoc(doc(db, 'appSettings', 'workspace_meta'), {
+      id: 'workspace_meta',
+      workspaceId: WORKSPACE_ID,
+      managerPin: cleanPin,
+      seeded: true,
+      updatedAt: new Date().toISOString(),
+    }).catch((err) =>
+      handleFirestoreError(err, OperationType.WRITE, 'appSettings/workspace_meta')
+    );
   },
 
   getUiSession(): PersistedUiSession | null {
@@ -956,10 +1298,496 @@ export const supabaseMockDb = {
     }
   },
 
+  // ==========================================================================
+  // DIRECT FIRESTORE CLOUD MUTATIONS (Instant Real-Time Persistence)
+  // ==========================================================================
+  async createBranchInCloud(branch: Branch): Promise<void> {
+    const clean = toFirestoreBranch(branch);
+    const path = `branches/${clean.id}`;
+    try {
+      await setDoc(doc(db, 'branches', String(clean.id)), clean);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
+  },
+
+  async updateBranchInCloud(
+    branch: Branch,
+    affectedSubmissions: KpiSubmission[]
+  ): Promise<void> {
+    const clean = toFirestoreBranch(branch);
+    const path = `branches/${clean.id}`;
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'branches', String(clean.id)), clean);
+      for (const sub of affectedSubmissions) {
+        const cleanSub = toFirestoreSubmission(sub);
+        batch.set(doc(db, 'kpiSubmissions', String(cleanSub.id)), cleanSub);
+      }
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  },
+
+  async deleteBranchInCloud(
+    branchId: string,
+    employeeIdsToDelete: string[]
+  ): Promise<void> {
+    const cleanId = sanitizeId(branchId, 'branch');
+    const path = `branches/${cleanId}`;
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'branches', cleanId));
+      for (const empId of employeeIdsToDelete) {
+        batch.delete(doc(db, 'employees', sanitizeId(empId, 'emp')));
+      }
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
+  },
+
+  async createEmployeeInCloud(employee: Employee): Promise<void> {
+    const clean = toFirestoreEmployee(employee);
+    const path = `employees/${clean.id}`;
+    try {
+      await setDoc(doc(db, 'employees', String(clean.id)), clean);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
+  },
+
+  async deleteEmployeeInCloud(employeeId: string): Promise<void> {
+    const cleanId = sanitizeId(employeeId, 'emp');
+    const path = `employees/${cleanId}`;
+    try {
+      await deleteDoc(doc(db, 'employees', cleanId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
+  },
+
+  async syncCategoriesInCloud(
+    categories: FormQuestionCategory[],
+    previousCategoryIds: string[]
+  ): Promise<void> {
+    const path = 'formCategories';
+    try {
+      const batch = writeBatch(db);
+      const nextIds = new Set<string>();
+
+      categories.forEach((cat, idx) => {
+        const clean = toFirestoreCategory(cat, idx);
+        const docId = String(clean.id);
+        nextIds.add(docId);
+        batch.set(doc(db, 'formCategories', docId), clean);
+      });
+
+      for (const oldId of previousCategoryIds) {
+        const cleanOld = sanitizeId(oldId, 'cat');
+        if (!nextIds.has(cleanOld)) {
+          batch.delete(doc(db, 'formCategories', cleanOld));
+        }
+      }
+
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  },
+
+  async syncQuestionsInCloud(
+    questions: FormQuestion[],
+    previousQuestionIds: string[]
+  ): Promise<void> {
+    const path = 'formQuestions';
+    try {
+      const batch = writeBatch(db);
+      const nextIds = new Set<string>();
+
+      questions.forEach((q, idx) => {
+        const clean = toFirestoreQuestion(q, idx);
+        const docId = String(clean.id);
+        nextIds.add(docId);
+        batch.set(doc(db, 'formQuestions', docId), clean);
+      });
+
+      for (const oldId of previousQuestionIds) {
+        const cleanOld = sanitizeId(oldId, 'q');
+        if (!nextIds.has(cleanOld)) {
+          batch.delete(doc(db, 'formQuestions', cleanOld));
+        }
+      }
+
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  },
+
+  async createSubmissionInCloud(submission: KpiSubmission): Promise<void> {
+    const clean = toFirestoreSubmission(submission);
+    const path = `kpiSubmissions/${clean.id}`;
+    try {
+      await setDoc(doc(db, 'kpiSubmissions', String(clean.id)), clean);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
+  },
+
+  async updateSubmissionNotificationStatusInCloud(
+    submissionId: string,
+    lineNotificationSent: boolean
+  ): Promise<void> {
+    const cleanId = sanitizeId(submissionId, 'sub');
+    const path = `kpiSubmissions/${cleanId}`;
+    try {
+      await updateDoc(doc(db, 'kpiSubmissions', cleanId), {
+        lineNotificationSent: Boolean(lineNotificationSent),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  },
+
+  async deleteSubmissionInCloud(submissionId: string): Promise<void> {
+    const cleanId = sanitizeId(submissionId, 'sub');
+    const path = `kpiSubmissions/${cleanId}`;
+    try {
+      await deleteDoc(doc(db, 'kpiSubmissions', cleanId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
+  },
+
+  async createLineLogInCloud(log: LineWebhookLog): Promise<void> {
+    const clean = toFirestoreLineLog(log);
+    const path = `lineLogs/${clean.id}`;
+    try {
+      await setDoc(doc(db, 'lineLogs', String(clean.id)), clean);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
+  },
+
   /**
-   * Hydrates state from IndexedDB and/or Supabase Cloud if available,
-   * ensuring large image submissions or cloud records are restored after page refresh.
+   * Subscribes to real-time updates from Cloud Firestore (onSnapshot)
+   * AND cross-tab BroadcastChannel/localStorage events.
    */
+  subscribeToRealtimeDatabase(callbacks: RealtimeDatabaseCallbacks): () => void {
+    const unsubscribers: Array<() => void> = [];
+    let isDisposed = false;
+
+    callbacks.onConnectionStatusChange?.('connecting');
+
+    void ensureFirestoreWorkspaceSeeded()
+      .then(() => {
+        if (isDisposed) return;
+
+        // 1. Real-time Branches Listener
+        const branchesQuery = query(
+          collection(db, 'branches'),
+          where('workspaceId', '==', WORKSPACE_ID)
+        );
+        unsubscribers.push(
+          onSnapshot(
+            branchesQuery,
+            (snapshot) => {
+              callbacks.onConnectionStatusChange?.('connected');
+              if (snapshot.empty) return;
+              const list = snapshot.docs
+                .map((d) => {
+                  const data = d.data();
+                  return {
+                    id: String(data.id || d.id),
+                    name: String(data.name || ''),
+                    code: String(data.code || ''),
+                    district: String(data.district || ''),
+                    addressSummary: String(data.addressSummary || ''),
+                    createdAt: String(data.createdAt || ''),
+                  } satisfies Branch;
+                })
+                .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+              writeLocalMirror(STORAGE_KEYS.BRANCHES, list, false);
+              callbacks.onBranchesChange?.(list);
+            },
+            (error) => {
+              callbacks.onConnectionStatusChange?.(
+                'error',
+                'การเชื่อมต่อฐานข้อมูลคลาวด์ขัดข้อง ระบบกำลังใช้ข้อมูลสำรองในเครื่อง'
+              );
+              handleFirestoreError(error, OperationType.LIST, 'branches');
+            }
+          )
+        );
+
+        // 2. Real-time Employees Listener
+        const employeesQuery = query(
+          collection(db, 'employees'),
+          where('workspaceId', '==', WORKSPACE_ID)
+        );
+        unsubscribers.push(
+          onSnapshot(
+            employeesQuery,
+            (snapshot) => {
+              const list = snapshot.docs
+                .map((d) => {
+                  const data = d.data();
+                  return {
+                    id: String(data.id || d.id),
+                    branchId: String(data.branchId || ''),
+                    name: String(data.name || ''),
+                    createdAt: String(data.createdAt || ''),
+                  } satisfies Employee;
+                })
+                .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+              writeLocalMirror(STORAGE_KEYS.EMPLOYEES, list, false);
+              callbacks.onEmployeesChange?.(list);
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'employees');
+            }
+          )
+        );
+
+        // 3. Real-time Form Categories Listener
+        const categoriesQuery = query(
+          collection(db, 'formCategories'),
+          where('workspaceId', '==', WORKSPACE_ID)
+        );
+        unsubscribers.push(
+          onSnapshot(
+            categoriesQuery,
+            (snapshot) => {
+              if (snapshot.empty) return;
+              const list = snapshot.docs
+                .map((d) => {
+                  const data = d.data();
+                  return {
+                    id: String(data.id || d.id),
+                    name: String(data.name || ''),
+                    description: data.description ? String(data.description) : undefined,
+                    _sortOrder: typeof data.sortOrder === 'number' ? data.sortOrder : 0,
+                  };
+                })
+                .sort((a, b) => a._sortOrder - b._sortOrder)
+                .map(({ _sortOrder, ...rest }) => rest satisfies FormQuestionCategory);
+              writeLocalMirror(STORAGE_KEYS.QUESTION_CATEGORIES, list, false);
+              callbacks.onCategoriesChange?.(list);
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'formCategories');
+            }
+          )
+        );
+
+        // 4. Real-time Form Questions Listener
+        const questionsQuery = query(
+          collection(db, 'formQuestions'),
+          where('workspaceId', '==', WORKSPACE_ID)
+        );
+        unsubscribers.push(
+          onSnapshot(
+            questionsQuery,
+            (snapshot) => {
+              if (snapshot.empty) return;
+              const list = snapshot.docs
+                .map((d) => {
+                  const data = d.data();
+                  const q: FormQuestion & { _sortOrder: number } = {
+                    id: String(data.id || d.id),
+                    categoryId: data.categoryId ? String(data.categoryId) : undefined,
+                    title: String(data.title || ''),
+                    description: data.description ? String(data.description) : undefined,
+                    type: data.type as FormQuestion['type'],
+                    required: Boolean(data.required),
+                    options: Array.isArray(data.options)
+                      ? data.options.map(String)
+                      : undefined,
+                    rows: Array.isArray(data.rows) ? data.rows.map(String) : undefined,
+                    columns: Array.isArray(data.columns)
+                      ? data.columns.map(String)
+                      : undefined,
+                    scaleMin:
+                      typeof data.scaleMin === 'number' ? data.scaleMin : undefined,
+                    scaleMax:
+                      typeof data.scaleMax === 'number' ? data.scaleMax : undefined,
+                    scaleMinLabel: data.scaleMinLabel
+                      ? String(data.scaleMinLabel)
+                      : undefined,
+                    scaleMaxLabel: data.scaleMaxLabel
+                      ? String(data.scaleMaxLabel)
+                      : undefined,
+                    maxScore:
+                      typeof data.maxScore === 'number' ? data.maxScore : undefined,
+                    unitLabel: data.unitLabel ? String(data.unitLabel) : undefined,
+                    _sortOrder:
+                      typeof data.sortOrder === 'number' ? data.sortOrder : 0,
+                  };
+                  return q;
+                })
+                .sort((a, b) => a._sortOrder - b._sortOrder)
+                .map(({ _sortOrder, ...rest }) => rest satisfies FormQuestion);
+              writeLocalMirror(STORAGE_KEYS.QUESTIONS, list, false);
+              callbacks.onQuestionsChange?.(list);
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'formQuestions');
+            }
+          )
+        );
+
+        // 5. Real-time KPI Submissions Listener
+        const submissionsQuery = query(
+          collection(db, 'kpiSubmissions'),
+          where('workspaceId', '==', WORKSPACE_ID)
+        );
+        unsubscribers.push(
+          onSnapshot(
+            submissionsQuery,
+            (snapshot) => {
+              const list = snapshot.docs
+                .map((d) => {
+                  const data = d.data();
+                  return {
+                    id: String(data.id || d.id),
+                    branchId: String(data.branchId || ''),
+                    branchName: String(data.branchName || ''),
+                    employeeId: String(data.employeeId || ''),
+                    employeeName: String(data.employeeName || ''),
+                    submissionDate: String(data.submissionDate || ''),
+                    createdAt: String(data.createdAt || ''),
+                    responses: Array.isArray(data.responses)
+                      ? (data.responses as FormQuestionResponse[])
+                      : [],
+                    images: Array.isArray(data.images)
+                      ? (data.images as UploadedEvidence[])
+                      : [],
+                    lineNotificationSent: Boolean(data.lineNotificationSent),
+                  } satisfies KpiSubmission;
+                })
+                .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+              writeLocalMirror(STORAGE_KEYS.SUBMISSIONS, list, false);
+              callbacks.onSubmissionsChange?.(list);
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'kpiSubmissions');
+            }
+          )
+        );
+
+        // 6. Real-time LINE Webhook Logs Listener
+        const lineLogsQuery = query(
+          collection(db, 'lineLogs'),
+          where('workspaceId', '==', WORKSPACE_ID)
+        );
+        unsubscribers.push(
+          onSnapshot(
+            lineLogsQuery,
+            (snapshot) => {
+              const list = snapshot.docs
+                .map((d) => {
+                  const data = d.data();
+                  return {
+                    id: String(data.id || d.id),
+                    submissionId: String(data.submissionId || ''),
+                    timestamp: String(data.timestamp || ''),
+                    branchName: String(data.branchName || ''),
+                    employeeName: String(data.employeeName || ''),
+                    messagePreview: String(data.messagePreview || ''),
+                    status: (data.status as LineWebhookLog['status']) || 'simulated_ok',
+                    statusMessageTh: data.statusMessageTh
+                      ? String(data.statusMessageTh)
+                      : undefined,
+                    endpointUrl: data.endpointUrl
+                      ? String(data.endpointUrl)
+                      : undefined,
+                  } satisfies LineWebhookLog;
+                })
+                .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+              writeLocalMirror(STORAGE_KEYS.LINE_LOGS, list, false);
+              callbacks.onLineLogsChange?.(list);
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'lineLogs');
+            }
+          )
+        );
+
+        // 7. Real-time Workspace Settings (Manager PIN) Listener
+        const metaRef = doc(db, 'appSettings', 'workspace_meta');
+        unsubscribers.push(
+          onSnapshot(
+            metaRef,
+            (docSnap) => {
+              if (!docSnap.exists()) return;
+              const data = docSnap.data();
+              if (typeof data.managerPin === 'string' && data.managerPin.length >= 4) {
+                writeLocalMirror(STORAGE_KEYS.MANAGER_PIN, data.managerPin, false);
+                callbacks.onManagerPinChange?.(data.managerPin);
+              }
+            },
+            (error) => {
+              handleFirestoreError(
+                error,
+                OperationType.GET,
+                'appSettings/workspace_meta'
+              );
+            }
+          )
+        );
+      })
+      .catch(() => {
+        callbacks.onConnectionStatusChange?.(
+          'error',
+          'ไม่สามารถซิงก์ข้อมูลเริ่มต้นกับฐานข้อมูลคลาวด์ได้ ระบบกำลังใช้งานโหมดออฟไลน์'
+        );
+      });
+
+    // Cross-Tab BroadcastChannel & Storage event listener for instant 0ms local tab sync
+    const handleKeySync = (key: string | null) => {
+      if (!key) return;
+      if (key === STORAGE_KEYS.BRANCHES) {
+        callbacks.onBranchesChange?.(supabaseMockDb.getBranches());
+      } else if (key === STORAGE_KEYS.EMPLOYEES) {
+        callbacks.onEmployeesChange?.(supabaseMockDb.getEmployees());
+      } else if (key === STORAGE_KEYS.QUESTION_CATEGORIES) {
+        callbacks.onCategoriesChange?.(supabaseMockDb.getQuestionCategories());
+      } else if (key === STORAGE_KEYS.QUESTIONS) {
+        callbacks.onQuestionsChange?.(supabaseMockDb.getQuestions());
+      } else if (key === STORAGE_KEYS.SUBMISSIONS) {
+        callbacks.onSubmissionsChange?.(supabaseMockDb.getSubmissions());
+      } else if (key === STORAGE_KEYS.LINE_LOGS) {
+        callbacks.onLineLogsChange?.(supabaseMockDb.getLineLogs());
+      } else if (key === STORAGE_KEYS.MANAGER_PIN) {
+        callbacks.onManagerPinChange?.(supabaseMockDb.getManagerPin());
+      }
+    };
+
+    const handleStorage = (e: StorageEvent) => handleKeySync(e.key);
+    window.addEventListener('storage', handleStorage);
+
+    const channel = getBroadcastChannel();
+    const handleBroadcast = (e: MessageEvent) => {
+      if (e.data && typeof e.data.key === 'string') {
+        handleKeySync(e.data.key);
+      }
+    };
+    if (channel) {
+      channel.addEventListener('message', handleBroadcast);
+    }
+
+    return () => {
+      isDisposed = true;
+      unsubscribers.forEach((unsub) => unsub());
+      window.removeEventListener('storage', handleStorage);
+      if (channel) {
+        channel.removeEventListener('message', handleBroadcast);
+      }
+    };
+  },
+
   async hydrateAllCollections(): Promise<{
     branches?: Branch[];
     employees?: Employee[];
@@ -977,7 +1805,6 @@ export const supabaseMockDb = {
       lineLogs?: LineWebhookLog[];
     } = {};
 
-    // 1. Check IndexedDB first (contains full uncompressed/compressed image arrays)
     const [
       idbBranches,
       idbEmployees,
@@ -1003,55 +1830,17 @@ export const supabaseMockDb = {
     if (idbSubmissions) result.submissions = idbSubmissions;
     if (idbLogs) result.lineLogs = idbLogs;
 
-    // 2. If Supabase Cloud is configured, fetch cloud state and merge/hydrate
-    const client = getActiveSupabaseClient();
-    if (client) {
-      try {
-        const { data, error } = await client
-          .from('kronokpi_app_state')
-          .select('collection_key, payload');
-        if (!error && data && data.length > 0) {
-          for (const row of data) {
-            if (
-              row.collection_key === STORAGE_KEYS.BRANCHES &&
-              Array.isArray(row.payload) &&
-              row.payload.length > 0
-            ) {
-              result.branches = row.payload as Branch[];
-            } else if (
-              row.collection_key === STORAGE_KEYS.EMPLOYEES &&
-              Array.isArray(row.payload)
-            ) {
-              result.employees = row.payload as Employee[];
-            } else if (
-              row.collection_key === STORAGE_KEYS.QUESTION_CATEGORIES &&
-              Array.isArray(row.payload) &&
-              row.payload.length > 0
-            ) {
-              result.categories = row.payload as FormQuestionCategory[];
-            } else if (
-              row.collection_key === STORAGE_KEYS.QUESTIONS &&
-              Array.isArray(row.payload) &&
-              row.payload.length > 0
-            ) {
-              result.questions = row.payload as FormQuestion[];
-            } else if (
-              row.collection_key === STORAGE_KEYS.SUBMISSIONS &&
-              Array.isArray(row.payload)
-            ) {
-              result.submissions = row.payload as KpiSubmission[];
-            }
-          }
-        }
-      } catch {
-        // Fallback to local persistence seamlessly
-      }
-    }
-
     return result;
   },
 
-  resetAllToDefaults(): void {
+  async resetAllToDefaultsInCloud(currentData: {
+    branches: Branch[];
+    employees: Employee[];
+    categories: FormQuestionCategory[];
+    questions: FormQuestion[];
+    submissions: KpiSubmission[];
+    lineLogs: LineWebhookLog[];
+  }): Promise<void> {
     Object.values(STORAGE_KEYS).forEach((key) => {
       if (key !== STORAGE_KEYS.SUPABASE_CONFIG) {
         localStorage.removeItem(key);
@@ -1062,15 +1851,82 @@ export const supabaseMockDb = {
       .forEach((oldKey) => localStorage.removeItem(oldKey));
     void clearIndexedDb();
 
-    // Immediately write clean default records to storage
-    writeStorage(STORAGE_KEYS.BRANCHES, INITIAL_BRANCHES);
-    writeStorage(STORAGE_KEYS.EMPLOYEES, INITIAL_EMPLOYEES);
-    writeStorage(
+    writeLocalMirror(STORAGE_KEYS.BRANCHES, INITIAL_BRANCHES);
+    writeLocalMirror(STORAGE_KEYS.EMPLOYEES, INITIAL_EMPLOYEES);
+    writeLocalMirror(
       STORAGE_KEYS.QUESTION_CATEGORIES,
       INITIAL_QUESTION_CATEGORIES
     );
-    writeStorage(STORAGE_KEYS.QUESTIONS, INITIAL_FORM_QUESTIONS);
-    writeStorage(STORAGE_KEYS.SUBMISSIONS, INITIAL_SUBMISSIONS);
-    writeStorage(STORAGE_KEYS.LINE_LOGS, []);
+    writeLocalMirror(STORAGE_KEYS.QUESTIONS, INITIAL_FORM_QUESTIONS);
+    writeLocalMirror(STORAGE_KEYS.SUBMISSIONS, INITIAL_SUBMISSIONS);
+    writeLocalMirror(STORAGE_KEYS.LINE_LOGS, []);
+
+    try {
+      const batch = writeBatch(db);
+
+      // Delete existing documents that are not in default sets
+      const defaultBranchIds = new Set(INITIAL_BRANCHES.map((b) => b.id));
+      for (const b of currentData.branches) {
+        if (!defaultBranchIds.has(b.id)) {
+          batch.delete(doc(db, 'branches', sanitizeId(b.id, 'branch')));
+        }
+      }
+      for (const b of INITIAL_BRANCHES) {
+        const clean = toFirestoreBranch(b);
+        batch.set(doc(db, 'branches', String(clean.id)), clean);
+      }
+
+      const defaultEmpIds = new Set(INITIAL_EMPLOYEES.map((e) => e.id));
+      for (const emp of currentData.employees) {
+        if (!defaultEmpIds.has(emp.id)) {
+          batch.delete(doc(db, 'employees', sanitizeId(emp.id, 'emp')));
+        }
+      }
+      for (const emp of INITIAL_EMPLOYEES) {
+        const clean = toFirestoreEmployee(emp);
+        batch.set(doc(db, 'employees', String(clean.id)), clean);
+      }
+
+      const defaultCatIds = new Set(INITIAL_QUESTION_CATEGORIES.map((c) => c.id));
+      for (const cat of currentData.categories) {
+        if (!defaultCatIds.has(cat.id)) {
+          batch.delete(doc(db, 'formCategories', sanitizeId(cat.id, 'cat')));
+        }
+      }
+      INITIAL_QUESTION_CATEGORIES.forEach((cat, idx) => {
+        const clean = toFirestoreCategory(cat, idx);
+        batch.set(doc(db, 'formCategories', String(clean.id)), clean);
+      });
+
+      const defaultQIds = new Set(INITIAL_FORM_QUESTIONS.map((q) => q.id));
+      for (const q of currentData.questions) {
+        if (!defaultQIds.has(q.id)) {
+          batch.delete(doc(db, 'formQuestions', sanitizeId(q.id, 'q')));
+        }
+      }
+      INITIAL_FORM_QUESTIONS.forEach((q, idx) => {
+        const clean = toFirestoreQuestion(q, idx);
+        batch.set(doc(db, 'formQuestions', String(clean.id)), clean);
+      });
+
+      const defaultSubIds = new Set(INITIAL_SUBMISSIONS.map((s) => s.id));
+      for (const sub of currentData.submissions) {
+        if (!defaultSubIds.has(sub.id)) {
+          batch.delete(doc(db, 'kpiSubmissions', sanitizeId(sub.id, 'sub')));
+        }
+      }
+      for (const sub of INITIAL_SUBMISSIONS) {
+        const clean = toFirestoreSubmission(sub);
+        batch.set(doc(db, 'kpiSubmissions', String(clean.id)), clean);
+      }
+
+      for (const log of currentData.lineLogs) {
+        batch.delete(doc(db, 'lineLogs', sanitizeId(log.id, 'log')));
+      }
+
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'resetAllToDefaults');
+    }
   },
 };

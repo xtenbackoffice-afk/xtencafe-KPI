@@ -1,0 +1,524 @@
+{
+  "entities": {
+    "Branch": {
+      "title": "Branch",
+      "description": "Store branch location and metadata for xtencafe KPI.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique branch identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Tenant workspace identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Branch display name in Thai.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "code": {
+          "type": "string",
+          "description": "Short branch code (e.g. BKK-RM3).",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "district": {
+          "type": "string",
+          "description": "District or area in Thai.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "addressSummary": {
+          "type": "string",
+          "description": "Address details for the branch.",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO creation timestamp.",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "name",
+        "code",
+        "district",
+        "addressSummary",
+        "createdAt"
+      ]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Branch staff member identified by nickname.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique employee identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Tenant workspace identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Associated branch ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Employee nickname in Thai.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO creation timestamp.",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "branchId",
+        "name",
+        "createdAt"
+      ]
+    },
+    "FormQuestionCategory": {
+      "title": "FormQuestionCategory",
+      "description": "Category section grouping KPI form questions.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique category identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Tenant workspace identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Category title in Thai.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "Category helper description in Thai.",
+          "maxLength": 500
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Display order index."
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "name",
+        "sortOrder"
+      ]
+    },
+    "FormQuestion": {
+      "title": "FormQuestion",
+      "description": "Custom KPI evaluation question configured by managers.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique question identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Tenant workspace identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "categoryId": {
+          "type": "string",
+          "description": "Category ID this question belongs to.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Question prompt in Thai.",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "description": {
+          "type": "string",
+          "description": "Additional instructions for the question.",
+          "maxLength": 600
+        },
+        "type": {
+          "type": "string",
+          "description": "Question input type.",
+          "enum": [
+            "short_text",
+            "paragraph",
+            "number",
+            "multiple_choice",
+            "checkboxes",
+            "dropdown",
+            "linear_scale",
+            "rating",
+            "multiple_choice_grid",
+            "checkbox_grid",
+            "image_upload",
+            "date",
+            "time"
+          ],
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the question is mandatory."
+        },
+        "options": {
+          "type": "array",
+          "description": "Selectable choices for choice/dropdown questions."
+        },
+        "rows": {
+          "type": "array",
+          "description": "Grid row labels."
+        },
+        "columns": {
+          "type": "array",
+          "description": "Grid column labels."
+        },
+        "scaleMin": {
+          "type": "number",
+          "description": "Minimum value for linear scale."
+        },
+        "scaleMax": {
+          "type": "number",
+          "description": "Maximum value for linear scale."
+        },
+        "scaleMinLabel": {
+          "type": "string",
+          "description": "Label for minimum scale point.",
+          "maxLength": 120
+        },
+        "scaleMaxLabel": {
+          "type": "string",
+          "description": "Label for maximum scale point.",
+          "maxLength": 120
+        },
+        "maxScore": {
+          "type": "number",
+          "description": "Optional maximum numeric score."
+        },
+        "unitLabel": {
+          "type": "string",
+          "description": "Optional unit label (e.g. บาท, คะแนน).",
+          "maxLength": 64
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Display order index."
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "title",
+        "type",
+        "required",
+        "sortOrder"
+      ]
+    },
+    "KpiSubmission": {
+      "title": "KpiSubmission",
+      "description": "Employee daily KPI form submission with answers and proof images.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique submission identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Tenant workspace identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Submitted branch ID.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "branchName": {
+          "type": "string",
+          "description": "Submitted branch name.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "employeeId": {
+          "type": "string",
+          "description": "Submitted employee ID.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "employeeName": {
+          "type": "string",
+          "description": "Submitted employee nickname.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "submissionDate": {
+          "type": "string",
+          "description": "Submission date YYYY-MM-DD.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO creation timestamp.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "responses": {
+          "type": "array",
+          "description": "List of question response items."
+        },
+        "images": {
+          "type": "array",
+          "description": "Uploaded proof image items."
+        },
+        "lineNotificationSent": {
+          "type": "boolean",
+          "description": "Whether LINE notification was triggered."
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "branchId",
+        "branchName",
+        "employeeId",
+        "employeeName",
+        "submissionDate",
+        "createdAt",
+        "responses",
+        "images",
+        "lineNotificationSent"
+      ]
+    },
+    "LineWebhookLog": {
+      "title": "LineWebhookLog",
+      "description": "Audit log entry for LINE Messaging API push notifications.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique log identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Tenant workspace identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "submissionId": {
+          "type": "string",
+          "description": "Associated KPI submission ID.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of notification attempt.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "branchName": {
+          "type": "string",
+          "description": "Branch name.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "employeeName": {
+          "type": "string",
+          "description": "Employee nickname.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "messagePreview": {
+          "type": "string",
+          "description": "Formatted Thai LINE notification text.",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "dispatched",
+            "simulated_ok",
+            "error"
+          ],
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "statusMessageTh": {
+          "type": "string",
+          "description": "Thai status message.",
+          "maxLength": 1000
+        },
+        "endpointUrl": {
+          "type": "string",
+          "description": "Target LINE API endpoint.",
+          "maxLength": 300
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "submissionId",
+        "timestamp",
+        "branchName",
+        "employeeName",
+        "messagePreview",
+        "status"
+      ]
+    },
+    "WorkspaceSetting": {
+      "title": "WorkspaceSetting",
+      "description": "Global workspace settings including manager PIN and initialization status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Setting document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Tenant workspace identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "managerPin": {
+          "type": "string",
+          "description": "4-digit manager PIN code for administrative actions.",
+          "minLength": 4,
+          "maxLength": 16,
+          "pattern": "^[0-9]+$"
+        },
+        "seeded": {
+          "type": "boolean",
+          "description": "Whether initial workspace seed data has been populated."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of last update.",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "managerPin",
+        "seeded",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/branches/{branchId}": {
+      "schema": {
+        "$ref": "#/entities/Branch"
+      },
+      "description": "Store branches and locations."
+    },
+    "/employees/{employeeId}": {
+      "schema": {
+        "$ref": "#/entities/Employee"
+      },
+      "description": "Branch employees (nicknames)."
+    },
+    "/formCategories/{categoryId}": {
+      "schema": {
+        "$ref": "#/entities/FormQuestionCategory"
+      },
+      "description": "Categories for KPI form questions."
+    },
+    "/formQuestions/{questionId}": {
+      "schema": {
+        "$ref": "#/entities/FormQuestion"
+      },
+      "description": "Custom KPI form questions."
+    },
+    "/kpiSubmissions/{submissionId}": {
+      "schema": {
+        "$ref": "#/entities/KpiSubmission"
+      },
+      "description": "Submitted KPI forms and responses."
+    },
+    "/lineLogs/{logId}": {
+      "schema": {
+        "$ref": "#/entities/LineWebhookLog"
+      },
+      "description": "LINE Messaging API notification logs."
+    },
+    "/appSettings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/WorkspaceSetting"
+      },
+      "description": "Workspace configuration and manager PIN settings."
+    }
+  }
+}

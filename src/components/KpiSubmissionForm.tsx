@@ -67,7 +67,7 @@ async function compressImageFile(file: File): Promise<{
       const img = new Image();
       img.onload = () => {
         try {
-          const MAX_DIMENSION = 1280;
+          const MAX_DIMENSION = 800;
           let width = img.width;
           let height = img.height;
 
@@ -95,7 +95,7 @@ async function compressImageFile(file: File): Promise<{
           }
 
           ctx.drawImage(img, 0, 0, width, height);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.78);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.68);
           const estimatedBytes = Math.round(
             ((compressedDataUrl.length - 'data:image/jpeg;base64,'.length) *
               3) /

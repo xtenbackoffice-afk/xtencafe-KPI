@@ -1,0 +1,353 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'xten.backoffice@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidWorkspace(workspaceId) {
+      return workspaceId is string && workspaceId.size() >= 1 && workspaceId.size() <= 64 && workspaceId == 'xtencafe_kpi_v1';
+    }
+
+    // Connection validation probe path
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+      allow list, create, update, delete: if false;
+    }
+
+    // Admins collection
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list, create, update, delete: if false;
+    }
+
+    // Blueprint Validation Helper: Branch
+    function isValidBranch(data, docId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'name', 'code', 'district', 'addressSummary', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'name', 'code', 'district', 'addressSummary', 'createdAt']) &&
+        data.id == docId &&
+        isValidId(data.id) &&
+        isValidWorkspace(data.workspaceId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 64 &&
+        data.district is string && data.district.size() >= 1 && data.district.size() <= 200 &&
+        data.addressSummary is string && data.addressSummary.size() >= 1 && data.addressSummary.size() <= 500 &&
+        data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64;
+    }
+
+    match /branches/{branchId} {
+      allow get: if isValidId(branchId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
+      allow create: if isValidId(branchId) && isValidBranch(incoming(), branchId);
+      allow update: if isValidBranch(incoming(), branchId) &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'district', 'addressSummary'])
+        );
+      allow delete: if isValidId(branchId) && existing().workspaceId == 'xtencafe_kpi_v1';
+    }
+
+    // Blueprint Validation Helper: Employee
+    function isValidEmployee(data, docId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'branchId', 'name', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'branchId', 'name', 'createdAt']) &&
+        data.id == docId &&
+        isValidId(data.id) &&
+        isValidWorkspace(data.workspaceId) &&
+        isValidId(data.branchId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64;
+    }
+
+    match /employees/{employeeId} {
+      allow get: if isValidId(employeeId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
+      allow create: if isValidId(employeeId) && isValidEmployee(incoming(), employeeId);
+      allow update: if isValidEmployee(incoming(), employeeId) &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'branchId'])
+        );
+      allow delete: if isValidId(employeeId) && existing().workspaceId == 'xtencafe_kpi_v1';
+    }
+
+    // Blueprint Validation Helper: FormQuestionCategory
+    function isValidCategory(data, docId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'name', 'sortOrder']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'name', 'description', 'sortOrder']) &&
+        data.id == docId &&
+        isValidId(data.id) &&
+        isValidWorkspace(data.workspaceId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 500)) &&
+        data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000;
+    }
+
+    match /formCategories/{categoryId} {
+      allow get: if isValidId(categoryId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
+      allow create: if isValidId(categoryId) && isValidCategory(incoming(), categoryId);
+      allow update: if isValidCategory(incoming(), categoryId) &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'sortOrder'])
+        );
+      allow delete: if isValidId(categoryId) && existing().workspaceId == 'xtencafe_kpi_v1';
+    }
+
+    // Blueprint Validation Helper: FormQuestion
+    function isValidQuestionType(qType) {
+      return qType is string && qType.size() >= 1 && qType.size() <= 64 &&
+        qType in [
+          'short_text',
+          'paragraph',
+          'number',
+          'multiple_choice',
+          'checkboxes',
+          'dropdown',
+          'linear_scale',
+          'rating',
+          'multiple_choice_grid',
+          'checkbox_grid',
+          'image_upload',
+          'date',
+          'time'
+        ];
+    }
+
+    function isValidQuestion(data, docId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'title', 'type', 'required', 'sortOrder']) &&
+        data.keys().hasOnly([
+          'id',
+          'workspaceId',
+          'categoryId',
+          'title',
+          'description',
+          'type',
+          'required',
+          'options',
+          'rows',
+          'columns',
+          'scaleMin',
+          'scaleMax',
+          'scaleMinLabel',
+          'scaleMaxLabel',
+          'maxScore',
+          'unitLabel',
+          'sortOrder'
+        ]) &&
+        data.id == docId &&
+        isValidId(data.id) &&
+        isValidWorkspace(data.workspaceId) &&
+        (!('categoryId' in data) || (data.categoryId is string && data.categoryId.size() <= 128)) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 400 &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 600)) &&
+        isValidQuestionType(data.type) &&
+        data.required is bool &&
+        (!('options' in data) || (data.options is list && data.options.size() <= 50 && (data.options.size() == 0 || data.options[0] is string))) &&
+        (!('rows' in data) || (data.rows is list && data.rows.size() <= 50 && (data.rows.size() == 0 || data.rows[0] is string))) &&
+        (!('columns' in data) || (data.columns is list && data.columns.size() <= 50 && (data.columns.size() == 0 || data.columns[0] is string))) &&
+        (!('scaleMin' in data) || data.scaleMin is number) &&
+        (!('scaleMax' in data) || data.scaleMax is number) &&
+        (!('scaleMinLabel' in data) || (data.scaleMinLabel is string && data.scaleMinLabel.size() <= 120)) &&
+        (!('scaleMaxLabel' in data) || (data.scaleMaxLabel is string && data.scaleMaxLabel.size() <= 120)) &&
+        (!('maxScore' in data) || data.maxScore is number) &&
+        (!('unitLabel' in data) || (data.unitLabel is string && data.unitLabel.size() <= 64)) &&
+        data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000;
+    }
+
+    match /formQuestions/{questionId} {
+      allow get: if isValidId(questionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
+      allow create: if isValidId(questionId) && isValidQuestion(incoming(), questionId);
+      allow update: if isValidQuestion(incoming(), questionId) &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'categoryId',
+            'title',
+            'description',
+            'type',
+            'required',
+            'options',
+            'rows',
+            'columns',
+            'scaleMin',
+            'scaleMax',
+            'scaleMinLabel',
+            'scaleMaxLabel',
+            'maxScore',
+            'unitLabel',
+            'sortOrder'
+          ])
+        );
+      allow delete: if isValidId(questionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+    }
+
+    // Blueprint Validation Helper: KpiSubmission
+    function isValidSubmission(data, docId) {
+      return data.keys().hasAll([
+          'id',
+          'workspaceId',
+          'branchId',
+          'branchName',
+          'employeeId',
+          'employeeName',
+          'submissionDate',
+          'createdAt',
+          'responses',
+          'images',
+          'lineNotificationSent'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'workspaceId',
+          'branchId',
+          'branchName',
+          'employeeId',
+          'employeeName',
+          'submissionDate',
+          'createdAt',
+          'responses',
+          'images',
+          'lineNotificationSent'
+        ]) &&
+        data.id == docId &&
+        isValidId(data.id) &&
+        isValidWorkspace(data.workspaceId) &&
+        isValidId(data.branchId) &&
+        data.branchName is string && data.branchName.size() >= 1 && data.branchName.size() <= 200 &&
+        isValidId(data.employeeId) &&
+        data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 120 &&
+        data.submissionDate is string && data.submissionDate.size() >= 1 && data.submissionDate.size() <= 32 &&
+        data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64 &&
+        data.responses is list && data.responses.size() <= 50 &&
+        (data.responses.size() == 0 || data.responses[0] is map) &&
+        data.images is list && data.images.size() <= 15 &&
+        (data.images.size() == 0 || data.images[0] is map) &&
+        data.lineNotificationSent is bool;
+    }
+
+    match /kpiSubmissions/{submissionId} {
+      allow get: if isValidId(submissionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
+      allow create: if isValidId(submissionId) && isValidSubmission(incoming(), submissionId);
+      allow update: if isValidSubmission(incoming(), submissionId) &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['branchName', 'lineNotificationSent'])
+        );
+      allow delete: if isValidId(submissionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+    }
+
+    // Blueprint Validation Helper: LineWebhookLog
+    function isValidLineLog(data, docId) {
+      return data.keys().hasAll([
+          'id',
+          'workspaceId',
+          'submissionId',
+          'timestamp',
+          'branchName',
+          'employeeName',
+          'messagePreview',
+          'status'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'workspaceId',
+          'submissionId',
+          'timestamp',
+          'branchName',
+          'employeeName',
+          'messagePreview',
+          'status',
+          'statusMessageTh',
+          'endpointUrl'
+        ]) &&
+        data.id == docId &&
+        isValidId(data.id) &&
+        isValidWorkspace(data.workspaceId) &&
+        isValidId(data.submissionId) &&
+        data.timestamp is string && data.timestamp.size() >= 1 && data.timestamp.size() <= 64 &&
+        data.branchName is string && data.branchName.size() >= 1 && data.branchName.size() <= 200 &&
+        data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 120 &&
+        data.messagePreview is string && data.messagePreview.size() >= 1 && data.messagePreview.size() <= 5000 &&
+        data.status is string && data.status.size() >= 1 && data.status.size() <= 32 &&
+        data.status in ['dispatched', 'simulated_ok', 'error'] &&
+        (!('statusMessageTh' in data) || (data.statusMessageTh is string && data.statusMessageTh.size() <= 1000)) &&
+        (!('endpointUrl' in data) || (data.endpointUrl is string && data.endpointUrl.size() <= 300));
+    }
+
+    match /lineLogs/{logId} {
+      allow get: if isValidId(logId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
+      allow create: if isValidId(logId) && isValidLineLog(incoming(), logId);
+      allow update: if isValidLineLog(incoming(), logId) &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusMessageTh'])
+        );
+      allow delete: if isValidId(logId) && existing().workspaceId == 'xtencafe_kpi_v1';
+    }
+
+    // Blueprint Validation Helper: WorkspaceSetting
+    function isValidWorkspaceSetting(data, docId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'managerPin', 'seeded', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'managerPin', 'seeded', 'updatedAt']) &&
+        data.id == docId &&
+        isValidId(data.id) &&
+        isValidWorkspace(data.workspaceId) &&
+        data.managerPin is string && data.managerPin.size() >= 4 && data.managerPin.size() <= 16 && data.managerPin.matches('^[0-9]+$') &&
+        data.seeded is bool &&
+        data.updatedAt is string && data.updatedAt.size() >= 1 && data.updatedAt.size() <= 64;
+    }
+
+    match /appSettings/{settingId} {
+      allow get: if isValidId(settingId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
+      allow create: if isValidId(settingId) && isValidWorkspaceSetting(incoming(), settingId);
+      allow update: if isValidWorkspaceSetting(incoming(), settingId) &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['managerPin', 'seeded', 'updatedAt'])
+        );
+      allow delete: if false;
+    }
+  }
+}
