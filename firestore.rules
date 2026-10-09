@@ -62,17 +62,16 @@ service cloud.firestore {
     }
 
     match /branches/{branchId} {
-      allow get: if isValidId(branchId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow get: if isValidId(branchId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
       allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
       allow create: if isValidId(branchId) && isValidBranch(incoming(), branchId);
       allow update: if isValidBranch(incoming(), branchId) &&
         incoming().id == existing().id &&
-        incoming().workspaceId == existing().workspaceId &&
-        incoming().createdAt == existing().createdAt && (
+        incoming().workspaceId == existing().workspaceId && (
           isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'district', 'addressSummary'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'district', 'addressSummary', 'createdAt'])
         );
-      allow delete: if isValidId(branchId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow delete: if isValidId(branchId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
     }
 
     // Blueprint Validation Helper: Employee
@@ -88,17 +87,16 @@ service cloud.firestore {
     }
 
     match /employees/{employeeId} {
-      allow get: if isValidId(employeeId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow get: if isValidId(employeeId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
       allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
       allow create: if isValidId(employeeId) && isValidEmployee(incoming(), employeeId);
       allow update: if isValidEmployee(incoming(), employeeId) &&
         incoming().id == existing().id &&
-        incoming().workspaceId == existing().workspaceId &&
-        incoming().createdAt == existing().createdAt && (
+        incoming().workspaceId == existing().workspaceId && (
           isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'branchId'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'branchId', 'createdAt'])
         );
-      allow delete: if isValidId(employeeId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow delete: if isValidId(employeeId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
     }
 
     // Blueprint Validation Helper: FormQuestionCategory
@@ -114,7 +112,7 @@ service cloud.firestore {
     }
 
     match /formCategories/{categoryId} {
-      allow get: if isValidId(categoryId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow get: if isValidId(categoryId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
       allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
       allow create: if isValidId(categoryId) && isValidCategory(incoming(), categoryId);
       allow update: if isValidCategory(incoming(), categoryId) &&
@@ -123,7 +121,7 @@ service cloud.firestore {
           isAdmin() ||
           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'sortOrder'])
         );
-      allow delete: if isValidId(categoryId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow delete: if isValidId(categoryId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
     }
 
     // Blueprint Validation Helper: FormQuestion
@@ -188,7 +186,7 @@ service cloud.firestore {
     }
 
     match /formQuestions/{questionId} {
-      allow get: if isValidId(questionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow get: if isValidId(questionId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
       allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
       allow create: if isValidId(questionId) && isValidQuestion(incoming(), questionId);
       allow update: if isValidQuestion(incoming(), questionId) &&
@@ -213,7 +211,7 @@ service cloud.firestore {
             'sortOrder'
           ])
         );
-      allow delete: if isValidId(questionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow delete: if isValidId(questionId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
     }
 
     // Blueprint Validation Helper: KpiSubmission
@@ -261,17 +259,26 @@ service cloud.firestore {
     }
 
     match /kpiSubmissions/{submissionId} {
-      allow get: if isValidId(submissionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow get: if isValidId(submissionId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
       allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
       allow create: if isValidId(submissionId) && isValidSubmission(incoming(), submissionId);
       allow update: if isValidSubmission(incoming(), submissionId) &&
         incoming().id == existing().id &&
-        incoming().workspaceId == existing().workspaceId &&
-        incoming().createdAt == existing().createdAt && (
+        incoming().workspaceId == existing().workspaceId && (
           isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['branchName', 'lineNotificationSent'])
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'branchId',
+            'branchName',
+            'employeeId',
+            'employeeName',
+            'submissionDate',
+            'createdAt',
+            'responses',
+            'images',
+            'lineNotificationSent'
+          ])
         );
-      allow delete: if isValidId(submissionId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow delete: if isValidId(submissionId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
     }
 
     // Blueprint Validation Helper: LineWebhookLog
@@ -313,16 +320,25 @@ service cloud.firestore {
     }
 
     match /lineLogs/{logId} {
-      allow get: if isValidId(logId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow get: if isValidId(logId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
       allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
       allow create: if isValidId(logId) && isValidLineLog(incoming(), logId);
       allow update: if isValidLineLog(incoming(), logId) &&
         incoming().id == existing().id &&
         incoming().workspaceId == existing().workspaceId && (
           isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'statusMessageTh'])
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'submissionId',
+            'timestamp',
+            'branchName',
+            'employeeName',
+            'messagePreview',
+            'status',
+            'statusMessageTh',
+            'endpointUrl'
+          ])
         );
-      allow delete: if isValidId(logId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow delete: if isValidId(logId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
     }
 
     // Blueprint Validation Helper: WorkspaceSetting
@@ -338,7 +354,7 @@ service cloud.firestore {
     }
 
     match /appSettings/{settingId} {
-      allow get: if isValidId(settingId) && existing().workspaceId == 'xtencafe_kpi_v1';
+      allow get: if isValidId(settingId) && (resource == null || existing().workspaceId == 'xtencafe_kpi_v1');
       allow list: if existing().workspaceId == 'xtencafe_kpi_v1';
       allow create: if isValidId(settingId) && isValidWorkspaceSetting(incoming(), settingId);
       allow update: if isValidWorkspaceSetting(incoming(), settingId) &&

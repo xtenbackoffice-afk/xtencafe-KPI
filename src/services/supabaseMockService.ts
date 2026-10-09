@@ -3,7 +3,6 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -99,7 +98,10 @@ export interface RealtimeDatabaseCallbacks {
   onSubmissionsChange?: (submissions: KpiSubmission[]) => void;
   onLineLogsChange?: (logs: LineWebhookLog[]) => void;
   onManagerPinChange?: (pin: string) => void;
-  onConnectionStatusChange?: (status: 'connecting' | 'connected' | 'error', messageTh?: string) => void;
+  onConnectionStatusChange?: (
+    status: 'connecting' | 'connected' | 'error',
+    messageTh?: string
+  ) => void;
 }
 
 export const SAMPLE_PROOF_ASSETS = [
@@ -608,7 +610,7 @@ export const INITIAL_SUBMISSIONS: KpiSubmission[] = [
 ];
 
 export const SUPABASE_SQL_SCHEMA = `-- ระบบฐานข้อมูลคลาวด์เรียลไทม์ (Firebase Firestore + Supabase PostgreSQL)
--- ข้อมูลทั้งหมดถูกซิงก์แบบเรียลไทม์ผ่าน Cloud Firestore อัตโนมัติ
+-- ข้อมูลทั้งหมดถูกซิงก์แบบเรียลไทม์ผ่าน Cloud Firestore (ai-studio-xtencafekpi) อัตโนมัติ
 
 create table if not exists public.kronokpi_app_state (
   collection_key text primary key,
@@ -681,7 +683,9 @@ function toFirestoreCategory(
     id,
     workspaceId: WORKSPACE_ID,
     name: sanitizeString(cat.name, 200, 'หมวดหมู่คำถาม'),
-    sortOrder: Number.isFinite(sortOrder) ? Math.max(0, Math.min(10000, sortOrder)) : 0,
+    sortOrder: Number.isFinite(sortOrder)
+      ? Math.max(0, Math.min(10000, Math.round(sortOrder)))
+      : 0,
   };
   if (cat.description && cat.description.trim().length > 0) {
     payload.description = cat.description.trim().slice(0, 500);
@@ -689,18 +693,37 @@ function toFirestoreCategory(
   return payload;
 }
 
+const VALID_QUESTION_TYPES = new Set([
+  'short_text',
+  'paragraph',
+  'number',
+  'multiple_choice',
+  'checkboxes',
+  'dropdown',
+  'linear_scale',
+  'rating',
+  'multiple_choice_grid',
+  'checkbox_grid',
+  'image_upload',
+  'date',
+  'time',
+]);
+
 function toFirestoreQuestion(
   q: FormQuestion,
   sortOrder: number
 ): Record<string, unknown> {
   const id = sanitizeId(q.id, 'q');
+  const safeType = VALID_QUESTION_TYPES.has(q.type) ? q.type : 'short_text';
   const payload: Record<string, unknown> = {
     id,
     workspaceId: WORKSPACE_ID,
     title: sanitizeString(q.title, 400, 'คำถามประเมิน KPI'),
-    type: q.type,
+    type: safeType,
     required: Boolean(q.required),
-    sortOrder: Number.isFinite(sortOrder) ? Math.max(0, Math.min(10000, sortOrder)) : 0,
+    sortOrder: Number.isFinite(sortOrder)
+      ? Math.max(0, Math.min(10000, Math.round(sortOrder)))
+      : 0,
   };
 
   if (q.categoryId && q.categoryId.trim().length > 0) {
@@ -749,7 +772,10 @@ function cleanUploadedEvidence(img: UploadedEvidence): Record<string, unknown> {
   return {
     id: sanitizeId(img.id, 'img'),
     fileName: sanitizeString(img.fileName, 200, 'image.jpg'),
-    fileSize: typeof img.fileSize === 'number' && Number.isFinite(img.fileSize) ? img.fileSize : 0,
+    fileSize:
+      typeof img.fileSize === 'number' && Number.isFinite(img.fileSize)
+        ? img.fileSize
+        : 0,
     mimeType: sanitizeString(img.mimeType, 64, 'image/jpeg'),
     dataUrl: typeof img.dataUrl === 'string' ? img.dataUrl : '',
   };
@@ -759,22 +785,33 @@ function cleanResponseItem(resp: FormQuestionResponse): Record<string, unknown> 
   const item: Record<string, unknown> = {
     questionId: sanitizeId(resp.questionId, 'q'),
     questionTitle: sanitizeString(resp.questionTitle, 400, 'คำถาม'),
-    questionType: resp.questionType,
+    questionType: VALID_QUESTION_TYPES.has(resp.questionType)
+      ? resp.questionType
+      : 'short_text',
   };
   if (resp.categoryId) item.categoryId = sanitizeId(resp.categoryId, 'cat');
-  if (resp.categoryName) item.categoryName = sanitizeString(resp.categoryName, 200, 'ทั่วไป');
-  if (resp.textValue !== undefined) item.textValue = String(resp.textValue).slice(0, 5000);
-  if (typeof resp.numberValue === 'number' && Number.isFinite(resp.numberValue)) {
+  if (resp.categoryName)
+    item.categoryName = sanitizeString(resp.categoryName, 200, 'ทั่วไป');
+  if (resp.textValue !== undefined)
+    item.textValue = String(resp.textValue).slice(0, 5000);
+  if (
+    typeof resp.numberValue === 'number' &&
+    Number.isFinite(resp.numberValue)
+  ) {
     item.numberValue = resp.numberValue;
   }
   if (Array.isArray(resp.choiceValues)) {
-    item.choiceValues = resp.choiceValues.slice(0, 50).map((c) => String(c).slice(0, 300));
+    item.choiceValues = resp.choiceValues
+      .slice(0, 50)
+      .map((c) => String(c).slice(0, 300));
   }
   if (resp.gridValues && typeof resp.gridValues === 'object') {
     const cleanGrid: Record<string, string[]> = {};
     for (const [k, v] of Object.entries(resp.gridValues)) {
       if (Array.isArray(v)) {
-        cleanGrid[k.slice(0, 200)] = v.slice(0, 50).map((x) => String(x).slice(0, 200));
+        cleanGrid[k.slice(0, 200)] = v
+          .slice(0, 50)
+          .map((x) => String(x).slice(0, 200));
       }
     }
     item.gridValues = cleanGrid;
@@ -818,14 +855,16 @@ function toFirestoreSubmission(sub: KpiSubmission): Record<string, unknown> {
     lineNotificationSent: Boolean(sub.lineNotificationSent),
   };
 
-  // Guard against Firestore 1MB document limit when multiple high-res images are attached
   const serializedSize = JSON.stringify(candidate).length;
-  if (serializedSize > 850_000) {
+  if (serializedSize > 800_000) {
+    // Keep top-level images lightweight if responses already contain the base64 images
     return {
       ...candidate,
-      images: cleanedImages.slice(0, 4),
+      images: cleanedImages.slice(0, 2),
       responses: cleanedResponses.map((r) =>
-        Array.isArray(r.images) ? { ...r, images: (r.images as unknown[]).slice(0, 4) } : r
+        Array.isArray(r.images)
+          ? { ...r, images: (r.images as unknown[]).slice(0, 2) }
+          : r
       ),
     };
   }
@@ -847,7 +886,11 @@ function toFirestoreLineLog(log: LineWebhookLog): Record<string, unknown> {
     timestamp: sanitizeString(log.timestamp, 64, new Date().toISOString()),
     branchName: sanitizeString(log.branchName, 200, 'สาขา'),
     employeeName: sanitizeString(log.employeeName, 120, 'พนักงาน'),
-    messagePreview: sanitizeString(log.messagePreview, 5000, 'แจ้งเตือนการส่ง KPI'),
+    messagePreview: sanitizeString(
+      log.messagePreview,
+      5000,
+      'แจ้งเตือนการส่ง KPI'
+    ),
     status: validStatus,
   };
   if (log.statusMessageTh) {
@@ -1102,106 +1145,85 @@ function writeLocalMirror<T>(key: string, data: T, broadcast = true): void {
 // ============================================================================
 // LAYER 0: REAL-TIME FIREBASE FIRESTORE CLOUD SYNC ENGINE
 // ============================================================================
-let initialSeedPromise: Promise<void> | null = null;
+let isSeedingCloud = false;
 
-export async function ensureFirestoreWorkspaceSeeded(): Promise<void> {
-  if (initialSeedPromise) {
-    return initialSeedPromise;
-  }
+async function seedEmptyFirestoreWorkspaceIfNeeded(): Promise<void> {
+  if (isSeedingCloud) return;
+  isSeedingCloud = true;
 
-  initialSeedPromise = (async () => {
-    const metaPath = 'appSettings/workspace_meta';
-    try {
-      const metaRef = doc(db, 'appSettings', 'workspace_meta');
-      const metaSnap = await getDoc(metaRef);
+  try {
+    const metaRef = doc(db, 'appSettings', 'workspace_meta');
+    const metaSnap = await getDoc(metaRef);
 
-      if (metaSnap.exists() && metaSnap.data()?.seeded === true) {
-        return;
-      }
-
-      // Check if branches already exist in Firestore
-      const branchesQuery = query(
-        collection(db, 'branches'),
-        where('workspaceId', '==', WORKSPACE_ID)
-      );
-      const branchesSnap = await getDocs(branchesQuery);
-
-      if (!branchesSnap.empty) {
-        await setDoc(metaRef, {
-          id: 'workspace_meta',
-          workspaceId: WORKSPACE_ID,
-          managerPin: readStorage<string>(STORAGE_KEYS.MANAGER_PIN, '1234'),
-          seeded: true,
-          updatedAt: new Date().toISOString(),
-        });
-        return;
-      }
-
-      // Seed initial data from local storage (if previously customized) or defaults
-      const seedBranches = readStorage<Branch[]>(
-        STORAGE_KEYS.BRANCHES,
-        INITIAL_BRANCHES
-      );
-      const seedEmployees = readStorage<Employee[]>(
-        STORAGE_KEYS.EMPLOYEES,
-        INITIAL_EMPLOYEES
-      );
-      const seedCategories = readStorage<FormQuestionCategory[]>(
-        STORAGE_KEYS.QUESTION_CATEGORIES,
-        INITIAL_QUESTION_CATEGORIES
-      );
-      const seedQuestions = readStorage<FormQuestion[]>(
-        STORAGE_KEYS.QUESTIONS,
-        INITIAL_FORM_QUESTIONS
-      );
-      const seedSubmissions = readStorage<KpiSubmission[]>(
-        STORAGE_KEYS.SUBMISSIONS,
-        INITIAL_SUBMISSIONS
-      );
-      const seedPin = readStorage<string>(STORAGE_KEYS.MANAGER_PIN, '1234');
-
-      const batch = writeBatch(db);
-
-      for (const b of seedBranches) {
-        const clean = toFirestoreBranch(b);
-        batch.set(doc(db, 'branches', String(clean.id)), clean);
-      }
-
-      for (const emp of seedEmployees) {
-        const clean = toFirestoreEmployee(emp);
-        batch.set(doc(db, 'employees', String(clean.id)), clean);
-      }
-
-      seedCategories.forEach((cat, idx) => {
-        const clean = toFirestoreCategory(cat, idx);
-        batch.set(doc(db, 'formCategories', String(clean.id)), clean);
-      });
-
-      seedQuestions.forEach((q, idx) => {
-        const clean = toFirestoreQuestion(q, idx);
-        batch.set(doc(db, 'formQuestions', String(clean.id)), clean);
-      });
-
-      for (const sub of seedSubmissions) {
-        const clean = toFirestoreSubmission(sub);
-        batch.set(doc(db, 'kpiSubmissions', String(clean.id)), clean);
-      }
-
-      batch.set(metaRef, {
-        id: 'workspace_meta',
-        workspaceId: WORKSPACE_ID,
-        managerPin: /^\d{4,16}$/.test(seedPin) ? seedPin : '1234',
-        seeded: true,
-        updatedAt: new Date().toISOString(),
-      });
-
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, metaPath);
+    if (metaSnap.exists() && metaSnap.data()?.seeded === true) {
+      return;
     }
-  })();
 
-  return initialSeedPromise;
+    const seedBranches = readStorage<Branch[]>(
+      STORAGE_KEYS.BRANCHES,
+      INITIAL_BRANCHES
+    );
+    const seedEmployees = readStorage<Employee[]>(
+      STORAGE_KEYS.EMPLOYEES,
+      INITIAL_EMPLOYEES
+    );
+    const seedCategories = readStorage<FormQuestionCategory[]>(
+      STORAGE_KEYS.QUESTION_CATEGORIES,
+      INITIAL_QUESTION_CATEGORIES
+    );
+    const seedQuestions = readStorage<FormQuestion[]>(
+      STORAGE_KEYS.QUESTIONS,
+      INITIAL_FORM_QUESTIONS
+    );
+    const seedSubmissions = readStorage<KpiSubmission[]>(
+      STORAGE_KEYS.SUBMISSIONS,
+      INITIAL_SUBMISSIONS
+    );
+    const seedPin = readStorage<string>(STORAGE_KEYS.MANAGER_PIN, '1234');
+
+    // Seed core metadata, branches, employees, categories, and questions
+    const coreBatch = writeBatch(db);
+
+    for (const b of seedBranches) {
+      const clean = toFirestoreBranch(b);
+      coreBatch.set(doc(db, 'branches', String(clean.id)), clean);
+    }
+
+    for (const emp of seedEmployees) {
+      const clean = toFirestoreEmployee(emp);
+      coreBatch.set(doc(db, 'employees', String(clean.id)), clean);
+    }
+
+    seedCategories.forEach((cat, idx) => {
+      const clean = toFirestoreCategory(cat, idx);
+      coreBatch.set(doc(db, 'formCategories', String(clean.id)), clean);
+    });
+
+    seedQuestions.forEach((q, idx) => {
+      const clean = toFirestoreQuestion(q, idx);
+      coreBatch.set(doc(db, 'formQuestions', String(clean.id)), clean);
+    });
+
+    coreBatch.set(metaRef, {
+      id: 'workspace_meta',
+      workspaceId: WORKSPACE_ID,
+      managerPin: /^\d{4,16}$/.test(seedPin) ? seedPin : '1234',
+      seeded: true,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await coreBatch.commit();
+
+    // Seed submissions individually so each submission document is committed cleanly
+    for (const sub of seedSubmissions) {
+      const clean = toFirestoreSubmission(sub);
+      await setDoc(doc(db, 'kpiSubmissions', String(clean.id)), clean);
+    }
+  } catch (error) {
+    console.warn('Firestore initial seed notice:', error);
+  } finally {
+    isSeedingCloud = false;
+  }
 }
 
 export const supabaseMockDb = {
@@ -1472,278 +1494,283 @@ export const supabaseMockDb = {
   },
 
   /**
-   * Subscribes to real-time updates from Cloud Firestore (onSnapshot)
+   * Subscribes immediately to real-time updates from Cloud Firestore (onSnapshot)
    * AND cross-tab BroadcastChannel/localStorage events.
    */
   subscribeToRealtimeDatabase(callbacks: RealtimeDatabaseCallbacks): () => void {
     const unsubscribers: Array<() => void> = [];
-    let isDisposed = false;
 
     callbacks.onConnectionStatusChange?.('connecting');
 
-    void ensureFirestoreWorkspaceSeeded()
-      .then(() => {
-        if (isDisposed) return;
+    // Trigger non-blocking initial workspace seed check in parallel
+    void seedEmptyFirestoreWorkspaceIfNeeded();
 
-        // 1. Real-time Branches Listener
-        const branchesQuery = query(
-          collection(db, 'branches'),
-          where('workspaceId', '==', WORKSPACE_ID)
-        );
-        unsubscribers.push(
-          onSnapshot(
-            branchesQuery,
-            (snapshot) => {
-              callbacks.onConnectionStatusChange?.('connected');
-              if (snapshot.empty) return;
-              const list = snapshot.docs
-                .map((d) => {
-                  const data = d.data();
-                  return {
-                    id: String(data.id || d.id),
-                    name: String(data.name || ''),
-                    code: String(data.code || ''),
-                    district: String(data.district || ''),
-                    addressSummary: String(data.addressSummary || ''),
-                    createdAt: String(data.createdAt || ''),
-                  } satisfies Branch;
-                })
-                .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-              writeLocalMirror(STORAGE_KEYS.BRANCHES, list, false);
-              callbacks.onBranchesChange?.(list);
-            },
-            (error) => {
-              callbacks.onConnectionStatusChange?.(
-                'error',
-                'การเชื่อมต่อฐานข้อมูลคลาวด์ขัดข้อง ระบบกำลังใช้ข้อมูลสำรองในเครื่อง'
-              );
-              handleFirestoreError(error, OperationType.LIST, 'branches');
-            }
-          )
-        );
+    // 1. Real-time Branches Listener
+    const branchesQuery = query(
+      collection(db, 'branches'),
+      where('workspaceId', '==', WORKSPACE_ID)
+    );
+    unsubscribers.push(
+      onSnapshot(
+        branchesQuery,
+        (snapshot) => {
+          callbacks.onConnectionStatusChange?.('connected');
+          if (snapshot.empty) {
+            void seedEmptyFirestoreWorkspaceIfNeeded();
+            return;
+          }
+          const list = snapshot.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                id: String(data.id || d.id),
+                name: String(data.name || ''),
+                code: String(data.code || ''),
+                district: String(data.district || ''),
+                addressSummary: String(data.addressSummary || ''),
+                createdAt: String(data.createdAt || ''),
+              } satisfies Branch;
+            })
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+          writeLocalMirror(STORAGE_KEYS.BRANCHES, list, false);
+          callbacks.onBranchesChange?.(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'branches');
+        }
+      )
+    );
 
-        // 2. Real-time Employees Listener
-        const employeesQuery = query(
-          collection(db, 'employees'),
-          where('workspaceId', '==', WORKSPACE_ID)
-        );
-        unsubscribers.push(
-          onSnapshot(
-            employeesQuery,
-            (snapshot) => {
-              const list = snapshot.docs
-                .map((d) => {
-                  const data = d.data();
-                  return {
-                    id: String(data.id || d.id),
-                    branchId: String(data.branchId || ''),
-                    name: String(data.name || ''),
-                    createdAt: String(data.createdAt || ''),
-                  } satisfies Employee;
-                })
-                .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-              writeLocalMirror(STORAGE_KEYS.EMPLOYEES, list, false);
-              callbacks.onEmployeesChange?.(list);
-            },
-            (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'employees');
-            }
-          )
-        );
+    // 2. Real-time Employees Listener
+    const employeesQuery = query(
+      collection(db, 'employees'),
+      where('workspaceId', '==', WORKSPACE_ID)
+    );
+    unsubscribers.push(
+      onSnapshot(
+        employeesQuery,
+        (snapshot) => {
+          callbacks.onConnectionStatusChange?.('connected');
+          if (snapshot.empty && isSeedingCloud) return;
+          const list = snapshot.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                id: String(data.id || d.id),
+                branchId: String(data.branchId || ''),
+                name: String(data.name || ''),
+                createdAt: String(data.createdAt || ''),
+              } satisfies Employee;
+            })
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+          writeLocalMirror(STORAGE_KEYS.EMPLOYEES, list, false);
+          callbacks.onEmployeesChange?.(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'employees');
+        }
+      )
+    );
 
-        // 3. Real-time Form Categories Listener
-        const categoriesQuery = query(
-          collection(db, 'formCategories'),
-          where('workspaceId', '==', WORKSPACE_ID)
-        );
-        unsubscribers.push(
-          onSnapshot(
-            categoriesQuery,
-            (snapshot) => {
-              if (snapshot.empty) return;
-              const list = snapshot.docs
-                .map((d) => {
-                  const data = d.data();
-                  return {
-                    id: String(data.id || d.id),
-                    name: String(data.name || ''),
-                    description: data.description ? String(data.description) : undefined,
-                    _sortOrder: typeof data.sortOrder === 'number' ? data.sortOrder : 0,
-                  };
-                })
-                .sort((a, b) => a._sortOrder - b._sortOrder)
-                .map(({ _sortOrder, ...rest }) => rest satisfies FormQuestionCategory);
-              writeLocalMirror(STORAGE_KEYS.QUESTION_CATEGORIES, list, false);
-              callbacks.onCategoriesChange?.(list);
-            },
-            (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'formCategories');
-            }
-          )
-        );
+    // 3. Real-time Form Categories Listener
+    const categoriesQuery = query(
+      collection(db, 'formCategories'),
+      where('workspaceId', '==', WORKSPACE_ID)
+    );
+    unsubscribers.push(
+      onSnapshot(
+        categoriesQuery,
+        (snapshot) => {
+          if (snapshot.empty) return;
+          const list = snapshot.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                id: String(data.id || d.id),
+                name: String(data.name || ''),
+                description: data.description
+                  ? String(data.description)
+                  : undefined,
+                _sortOrder:
+                  typeof data.sortOrder === 'number' ? data.sortOrder : 0,
+              };
+            })
+            .sort((a, b) => a._sortOrder - b._sortOrder)
+            .map(
+              ({ _sortOrder, ...rest }) => rest satisfies FormQuestionCategory
+            );
+          writeLocalMirror(STORAGE_KEYS.QUESTION_CATEGORIES, list, false);
+          callbacks.onCategoriesChange?.(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'formCategories');
+        }
+      )
+    );
 
-        // 4. Real-time Form Questions Listener
-        const questionsQuery = query(
-          collection(db, 'formQuestions'),
-          where('workspaceId', '==', WORKSPACE_ID)
-        );
-        unsubscribers.push(
-          onSnapshot(
-            questionsQuery,
-            (snapshot) => {
-              if (snapshot.empty) return;
-              const list = snapshot.docs
-                .map((d) => {
-                  const data = d.data();
-                  const q: FormQuestion & { _sortOrder: number } = {
-                    id: String(data.id || d.id),
-                    categoryId: data.categoryId ? String(data.categoryId) : undefined,
-                    title: String(data.title || ''),
-                    description: data.description ? String(data.description) : undefined,
-                    type: data.type as FormQuestion['type'],
-                    required: Boolean(data.required),
-                    options: Array.isArray(data.options)
-                      ? data.options.map(String)
-                      : undefined,
-                    rows: Array.isArray(data.rows) ? data.rows.map(String) : undefined,
-                    columns: Array.isArray(data.columns)
-                      ? data.columns.map(String)
-                      : undefined,
-                    scaleMin:
-                      typeof data.scaleMin === 'number' ? data.scaleMin : undefined,
-                    scaleMax:
-                      typeof data.scaleMax === 'number' ? data.scaleMax : undefined,
-                    scaleMinLabel: data.scaleMinLabel
-                      ? String(data.scaleMinLabel)
-                      : undefined,
-                    scaleMaxLabel: data.scaleMaxLabel
-                      ? String(data.scaleMaxLabel)
-                      : undefined,
-                    maxScore:
-                      typeof data.maxScore === 'number' ? data.maxScore : undefined,
-                    unitLabel: data.unitLabel ? String(data.unitLabel) : undefined,
-                    _sortOrder:
-                      typeof data.sortOrder === 'number' ? data.sortOrder : 0,
-                  };
-                  return q;
-                })
-                .sort((a, b) => a._sortOrder - b._sortOrder)
-                .map(({ _sortOrder, ...rest }) => rest satisfies FormQuestion);
-              writeLocalMirror(STORAGE_KEYS.QUESTIONS, list, false);
-              callbacks.onQuestionsChange?.(list);
-            },
-            (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'formQuestions');
-            }
-          )
-        );
+    // 4. Real-time Form Questions Listener
+    const questionsQuery = query(
+      collection(db, 'formQuestions'),
+      where('workspaceId', '==', WORKSPACE_ID)
+    );
+    unsubscribers.push(
+      onSnapshot(
+        questionsQuery,
+        (snapshot) => {
+          if (snapshot.empty) return;
+          const list = snapshot.docs
+            .map((d) => {
+              const data = d.data();
+              const q: FormQuestion & { _sortOrder: number } = {
+                id: String(data.id || d.id),
+                categoryId: data.categoryId
+                  ? String(data.categoryId)
+                  : undefined,
+                title: String(data.title || ''),
+                description: data.description
+                  ? String(data.description)
+                  : undefined,
+                type: data.type as FormQuestion['type'],
+                required: Boolean(data.required),
+                options: Array.isArray(data.options)
+                  ? data.options.map(String)
+                  : undefined,
+                rows: Array.isArray(data.rows)
+                  ? data.rows.map(String)
+                  : undefined,
+                columns: Array.isArray(data.columns)
+                  ? data.columns.map(String)
+                  : undefined,
+                scaleMin:
+                  typeof data.scaleMin === 'number' ? data.scaleMin : undefined,
+                scaleMax:
+                  typeof data.scaleMax === 'number' ? data.scaleMax : undefined,
+                scaleMinLabel: data.scaleMinLabel
+                  ? String(data.scaleMinLabel)
+                  : undefined,
+                scaleMaxLabel: data.scaleMaxLabel
+                  ? String(data.scaleMaxLabel)
+                  : undefined,
+                maxScore:
+                  typeof data.maxScore === 'number' ? data.maxScore : undefined,
+                unitLabel: data.unitLabel ? String(data.unitLabel) : undefined,
+                _sortOrder:
+                  typeof data.sortOrder === 'number' ? data.sortOrder : 0,
+              };
+              return q;
+            })
+            .sort((a, b) => a._sortOrder - b._sortOrder)
+            .map(({ _sortOrder, ...rest }) => rest satisfies FormQuestion);
+          writeLocalMirror(STORAGE_KEYS.QUESTIONS, list, false);
+          callbacks.onQuestionsChange?.(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'formQuestions');
+        }
+      )
+    );
 
-        // 5. Real-time KPI Submissions Listener
-        const submissionsQuery = query(
-          collection(db, 'kpiSubmissions'),
-          where('workspaceId', '==', WORKSPACE_ID)
-        );
-        unsubscribers.push(
-          onSnapshot(
-            submissionsQuery,
-            (snapshot) => {
-              const list = snapshot.docs
-                .map((d) => {
-                  const data = d.data();
-                  return {
-                    id: String(data.id || d.id),
-                    branchId: String(data.branchId || ''),
-                    branchName: String(data.branchName || ''),
-                    employeeId: String(data.employeeId || ''),
-                    employeeName: String(data.employeeName || ''),
-                    submissionDate: String(data.submissionDate || ''),
-                    createdAt: String(data.createdAt || ''),
-                    responses: Array.isArray(data.responses)
-                      ? (data.responses as FormQuestionResponse[])
-                      : [],
-                    images: Array.isArray(data.images)
-                      ? (data.images as UploadedEvidence[])
-                      : [],
-                    lineNotificationSent: Boolean(data.lineNotificationSent),
-                  } satisfies KpiSubmission;
-                })
-                .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-              writeLocalMirror(STORAGE_KEYS.SUBMISSIONS, list, false);
-              callbacks.onSubmissionsChange?.(list);
-            },
-            (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'kpiSubmissions');
-            }
-          )
-        );
+    // 5. Real-time KPI Submissions Listener
+    const submissionsQuery = query(
+      collection(db, 'kpiSubmissions'),
+      where('workspaceId', '==', WORKSPACE_ID)
+    );
+    unsubscribers.push(
+      onSnapshot(
+        submissionsQuery,
+        (snapshot) => {
+          if (snapshot.empty && isSeedingCloud) return;
+          const list = snapshot.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                id: String(data.id || d.id),
+                branchId: String(data.branchId || ''),
+                branchName: String(data.branchName || ''),
+                employeeId: String(data.employeeId || ''),
+                employeeName: String(data.employeeName || ''),
+                submissionDate: String(data.submissionDate || ''),
+                createdAt: String(data.createdAt || ''),
+                responses: Array.isArray(data.responses)
+                  ? (data.responses as FormQuestionResponse[])
+                  : [],
+                images: Array.isArray(data.images)
+                  ? (data.images as UploadedEvidence[])
+                  : [],
+                lineNotificationSent: Boolean(data.lineNotificationSent),
+              } satisfies KpiSubmission;
+            })
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+          writeLocalMirror(STORAGE_KEYS.SUBMISSIONS, list, false);
+          callbacks.onSubmissionsChange?.(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'kpiSubmissions');
+        }
+      )
+    );
 
-        // 6. Real-time LINE Webhook Logs Listener
-        const lineLogsQuery = query(
-          collection(db, 'lineLogs'),
-          where('workspaceId', '==', WORKSPACE_ID)
-        );
-        unsubscribers.push(
-          onSnapshot(
-            lineLogsQuery,
-            (snapshot) => {
-              const list = snapshot.docs
-                .map((d) => {
-                  const data = d.data();
-                  return {
-                    id: String(data.id || d.id),
-                    submissionId: String(data.submissionId || ''),
-                    timestamp: String(data.timestamp || ''),
-                    branchName: String(data.branchName || ''),
-                    employeeName: String(data.employeeName || ''),
-                    messagePreview: String(data.messagePreview || ''),
-                    status: (data.status as LineWebhookLog['status']) || 'simulated_ok',
-                    statusMessageTh: data.statusMessageTh
-                      ? String(data.statusMessageTh)
-                      : undefined,
-                    endpointUrl: data.endpointUrl
-                      ? String(data.endpointUrl)
-                      : undefined,
-                  } satisfies LineWebhookLog;
-                })
-                .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-              writeLocalMirror(STORAGE_KEYS.LINE_LOGS, list, false);
-              callbacks.onLineLogsChange?.(list);
-            },
-            (error) => {
-              handleFirestoreError(error, OperationType.LIST, 'lineLogs');
-            }
-          )
-        );
+    // 6. Real-time LINE Webhook Logs Listener
+    const lineLogsQuery = query(
+      collection(db, 'lineLogs'),
+      where('workspaceId', '==', WORKSPACE_ID)
+    );
+    unsubscribers.push(
+      onSnapshot(
+        lineLogsQuery,
+        (snapshot) => {
+          const list = snapshot.docs
+            .map((d) => {
+              const data = d.data();
+              return {
+                id: String(data.id || d.id),
+                submissionId: String(data.submissionId || ''),
+                timestamp: String(data.timestamp || ''),
+                branchName: String(data.branchName || ''),
+                employeeName: String(data.employeeName || ''),
+                messagePreview: String(data.messagePreview || ''),
+                status:
+                  (data.status as LineWebhookLog['status']) || 'simulated_ok',
+                statusMessageTh: data.statusMessageTh
+                  ? String(data.statusMessageTh)
+                  : undefined,
+                endpointUrl: data.endpointUrl
+                  ? String(data.endpointUrl)
+                  : undefined,
+              } satisfies LineWebhookLog;
+            })
+            .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+          writeLocalMirror(STORAGE_KEYS.LINE_LOGS, list, false);
+          callbacks.onLineLogsChange?.(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'lineLogs');
+        }
+      )
+    );
 
-        // 7. Real-time Workspace Settings (Manager PIN) Listener
-        const metaRef = doc(db, 'appSettings', 'workspace_meta');
-        unsubscribers.push(
-          onSnapshot(
-            metaRef,
-            (docSnap) => {
-              if (!docSnap.exists()) return;
-              const data = docSnap.data();
-              if (typeof data.managerPin === 'string' && data.managerPin.length >= 4) {
-                writeLocalMirror(STORAGE_KEYS.MANAGER_PIN, data.managerPin, false);
-                callbacks.onManagerPinChange?.(data.managerPin);
-              }
-            },
-            (error) => {
-              handleFirestoreError(
-                error,
-                OperationType.GET,
-                'appSettings/workspace_meta'
-              );
-            }
-          )
-        );
-      })
-      .catch(() => {
-        callbacks.onConnectionStatusChange?.(
-          'error',
-          'ไม่สามารถซิงก์ข้อมูลเริ่มต้นกับฐานข้อมูลคลาวด์ได้ ระบบกำลังใช้งานโหมดออฟไลน์'
-        );
-      });
+    // 7. Real-time Workspace Settings (Manager PIN) Listener
+    const metaRef = doc(db, 'appSettings', 'workspace_meta');
+    unsubscribers.push(
+      onSnapshot(
+        metaRef,
+        (docSnap) => {
+          if (!docSnap.exists()) return;
+          const data = docSnap.data();
+          if (typeof data.managerPin === 'string' && data.managerPin.length >= 4) {
+            writeLocalMirror(STORAGE_KEYS.MANAGER_PIN, data.managerPin, false);
+            callbacks.onManagerPinChange?.(data.managerPin);
+          }
+        },
+        (error) => {
+          handleFirestoreError(
+            error,
+            OperationType.GET,
+            'appSettings/workspace_meta'
+          );
+        }
+      )
+    );
 
     // Cross-Tab BroadcastChannel & Storage event listener for instant 0ms local tab sync
     const handleKeySync = (key: string | null) => {
@@ -1779,7 +1806,6 @@ export const supabaseMockDb = {
     }
 
     return () => {
-      isDisposed = true;
       unsubscribers.forEach((unsub) => unsub());
       window.removeEventListener('storage', handleStorage);
       if (channel) {
@@ -1864,7 +1890,6 @@ export const supabaseMockDb = {
     try {
       const batch = writeBatch(db);
 
-      // Delete existing documents that are not in default sets
       const defaultBranchIds = new Set(INITIAL_BRANCHES.map((b) => b.id));
       for (const b of currentData.branches) {
         if (!defaultBranchIds.has(b.id)) {
@@ -1887,7 +1912,9 @@ export const supabaseMockDb = {
         batch.set(doc(db, 'employees', String(clean.id)), clean);
       }
 
-      const defaultCatIds = new Set(INITIAL_QUESTION_CATEGORIES.map((c) => c.id));
+      const defaultCatIds = new Set(
+        INITIAL_QUESTION_CATEGORIES.map((c) => c.id)
+      );
       for (const cat of currentData.categories) {
         if (!defaultCatIds.has(cat.id)) {
           batch.delete(doc(db, 'formCategories', sanitizeId(cat.id, 'cat')));
@@ -1915,16 +1942,17 @@ export const supabaseMockDb = {
           batch.delete(doc(db, 'kpiSubmissions', sanitizeId(sub.id, 'sub')));
         }
       }
-      for (const sub of INITIAL_SUBMISSIONS) {
-        const clean = toFirestoreSubmission(sub);
-        batch.set(doc(db, 'kpiSubmissions', String(clean.id)), clean);
-      }
 
       for (const log of currentData.lineLogs) {
         batch.delete(doc(db, 'lineLogs', sanitizeId(log.id, 'log')));
       }
 
       await batch.commit();
+
+      for (const sub of INITIAL_SUBMISSIONS) {
+        const clean = toFirestoreSubmission(sub);
+        await setDoc(doc(db, 'kpiSubmissions', String(clean.id)), clean);
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'resetAllToDefaults');
     }

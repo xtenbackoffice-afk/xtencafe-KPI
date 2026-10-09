@@ -16,7 +16,7 @@ import { KpiSubmissionForm } from './components/KpiSubmissionForm';
 import { KpiTemplateCustomizer } from './components/KpiTemplateCustomizer';
 import { ManagerPinModal } from './components/ManagerPinModal';
 import { ManagerDashboard } from './components/ManagerDashboard';
-import { Building2, AlertCircle, X } from 'lucide-react';
+import { Building2 } from 'lucide-react';
 
 export default function App() {
   const [branches, setBranches] = useState<Branch[]>(() =>
@@ -40,7 +40,6 @@ export default function App() {
   const [managerPin, setManagerPin] = useState<string>(() =>
     supabaseMockDb.getManagerPin()
   );
-  const [cloudErrorTh, setCloudErrorTh] = useState<string | null>(null);
 
   const initialUiSession = supabaseMockDb.getUiSession();
 
@@ -85,7 +84,6 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Hydrate ข้อมูลจาก IndexedDB ทันทีระหว่างรอสตรีมจากคลาวด์
     supabaseMockDb.hydrateAllCollections().then((hydrated) => {
       if (!isMounted) return;
       if (hydrated.branches && hydrated.branches.length > 0) {
@@ -108,7 +106,6 @@ export default function App() {
       }
     });
 
-    // 2. เปิดรับการอัปเดตแบบเรียลไทม์จาก Cloud Firestore และแท็บอื่นทันทีโดยไม่ต้องรีเฟรชหน้าเว็บ
     const unsubscribeRealtime = supabaseMockDb.subscribeToRealtimeDatabase({
       onBranchesChange: (nextBranches) => {
         if (!isMounted) return;
@@ -137,14 +134,6 @@ export default function App() {
       onManagerPinChange: (nextPin) => {
         if (!isMounted) return;
         setManagerPin(nextPin);
-      },
-      onConnectionStatusChange: (status, messageTh) => {
-        if (!isMounted) return;
-        if (status === 'connected') {
-          setCloudErrorTh(null);
-        } else if (status === 'error' && messageTh) {
-          setCloudErrorTh(messageTh);
-        }
       },
     });
 
@@ -213,11 +202,7 @@ export default function App() {
     setSelectedBranchId(newBranch.id);
     setSelectedEmployeeIdForForm('');
 
-    void supabaseMockDb.createBranchInCloud(newBranch).catch(() => {
-      setCloudErrorTh(
-        'ไม่สามารถบันทึกข้อมูลสาขาใหม่ลงฐานข้อมูลคลาวด์ได้ในขณะนี้ ระบบได้สำรองข้อมูลไว้ในเครื่องเรียบร้อยแล้วครับ'
-      );
-    });
+    void supabaseMockDb.createBranchInCloud(newBranch);
   };
 
   const handleUpdateBranch = (
@@ -237,7 +222,7 @@ export default function App() {
       return next;
     });
 
-    let affectedSubs: KpiSubmission[] = [];
+    const affectedSubs: KpiSubmission[] = [];
     if (patch.name) {
       setSubmissions((prev) => {
         const next = prev.map((s) => {
@@ -254,13 +239,7 @@ export default function App() {
     }
 
     if (updatedBranchObj) {
-      void supabaseMockDb
-        .updateBranchInCloud(updatedBranchObj, affectedSubs)
-        .catch(() => {
-          setCloudErrorTh(
-            'ไม่สามารถซิงก์การแก้ไขข้อมูลสาขาไปยังฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
-          );
-        });
+      void supabaseMockDb.updateBranchInCloud(updatedBranchObj, affectedSubs);
     }
   };
 
@@ -288,13 +267,7 @@ export default function App() {
       return next;
     });
 
-    void supabaseMockDb
-      .deleteBranchInCloud(branchId, removedEmployeeIds)
-      .catch(() => {
-        setCloudErrorTh(
-          'ไม่สามารถลบข้อมูลสาขาบนฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
-        );
-      });
+    void supabaseMockDb.deleteBranchInCloud(branchId, removedEmployeeIds);
   };
 
   const handleAddEmployee = (branchId: string, nickname: string): Employee => {
@@ -310,11 +283,7 @@ export default function App() {
       return next;
     });
 
-    void supabaseMockDb.createEmployeeInCloud(newEmp).catch(() => {
-      setCloudErrorTh(
-        'ไม่สามารถบันทึกรายชื่อพนักงานลงฐานข้อมูลคลาวด์ได้ในขณะนี้ ระบบได้บันทึกไว้ในเครื่องเรียบร้อยแล้วครับ'
-      );
-    });
+    void supabaseMockDb.createEmployeeInCloud(newEmp);
 
     return newEmp;
   };
@@ -329,11 +298,7 @@ export default function App() {
       setSelectedEmployeeIdForForm('');
     }
 
-    void supabaseMockDb.deleteEmployeeInCloud(employeeId).catch(() => {
-      setCloudErrorTh(
-        'ไม่สามารถลบรายชื่อพนักงานบนฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
-      );
-    });
+    void supabaseMockDb.deleteEmployeeInCloud(employeeId);
   };
 
   const handleSaveCategories = (updated: FormQuestionCategory[]) => {
@@ -341,13 +306,7 @@ export default function App() {
     setCategories(updated);
     supabaseMockDb.saveQuestionCategories(updated);
 
-    void supabaseMockDb
-      .syncCategoriesInCloud(updated, previousIds)
-      .catch(() => {
-        setCloudErrorTh(
-          'ไม่สามารถบันทึกหมวดหมู่คำถามไปยังฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
-        );
-      });
+    void supabaseMockDb.syncCategoriesInCloud(updated, previousIds);
   };
 
   const handleSaveQuestions = (updated: FormQuestion[]) => {
@@ -355,13 +314,7 @@ export default function App() {
     setQuestions(updated);
     supabaseMockDb.saveQuestions(updated);
 
-    void supabaseMockDb
-      .syncQuestionsInCloud(updated, previousIds)
-      .catch(() => {
-        setCloudErrorTh(
-          'ไม่สามารถบันทึกชุดคำถามไปยังฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
-        );
-      });
+    void supabaseMockDb.syncQuestionsInCloud(updated, previousIds);
   };
 
   const handleKpiSubmit = async (
@@ -381,13 +334,7 @@ export default function App() {
       return next;
     });
 
-    try {
-      await supabaseMockDb.createSubmissionInCloud(newSubmission);
-    } catch {
-      setCloudErrorTh(
-        'บันทึกข้อมูลประเมิน KPI สำรองในเครื่องเรียบร้อยแล้ว (การเชื่อมต่อคลาวด์ขัดข้องชั่วคราว)'
-      );
-    }
+    await supabaseMockDb.createSubmissionInCloud(newSubmission);
 
     const webhookLog = await sendLineNotification(newSubmission);
 
@@ -397,9 +344,7 @@ export default function App() {
       return next;
     });
 
-    void supabaseMockDb.createLineLogInCloud(webhookLog).catch(() => {
-      // Log stored in local mirror seamlessly
-    });
+    void supabaseMockDb.createLineLogInCloud(webhookLog);
   };
 
   const handleDeleteSubmission = (submissionId: string) => {
@@ -409,11 +354,7 @@ export default function App() {
       return next;
     });
 
-    void supabaseMockDb.deleteSubmissionInCloud(submissionId).catch(() => {
-      setCloudErrorTh(
-        'ไม่สามารถลบรายการประเมิน KPI บนฐานข้อมูลคลาวด์ได้ในขณะนี้ครับ'
-      );
-    });
+    void supabaseMockDb.deleteSubmissionInCloud(submissionId);
   };
 
   const handleResetDemoData = () => {
@@ -438,11 +379,6 @@ export default function App() {
         setLineLogs([]);
         setSelectedBranchId(defaultBranches[0]?.id || null);
         setSelectedEmployeeIdForForm('');
-      })
-      .catch(() => {
-        setCloudErrorTh(
-          'เกิดข้อผิดพลาดขณะรีเซ็ตข้อมูลเริ่มต้นบนฐานข้อมูลคลาวด์ครับ'
-        );
       });
   };
 
@@ -488,26 +424,6 @@ export default function App() {
           )
         }
       />
-
-      {/* Polite Thai Cloud Database Error Notification Banner */}
-      {cloudErrorTh && (
-        <div className="max-w-[1360px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
-          <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-xl text-xs font-medium flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>{cloudErrorTh}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setCloudErrorTh(null)}
-              className="p-1 text-amber-700 hover:text-amber-900 rounded cursor-pointer"
-              aria-label="ปิดการแจ้งเตือน"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Main Content Viewport */}
       <main className="flex-1">
