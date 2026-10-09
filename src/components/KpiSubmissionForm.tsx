@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   Send,
   ShieldAlert,
-  Sparkles,
   FileCheck2,
   RotateCcw,
   ChevronRight,
@@ -25,7 +24,6 @@ import {
   KpiSubmission,
 } from '../types/kpi';
 import {
-  SAMPLE_PROOF_ASSETS,
   STORAGE_KEYS,
 } from '../services/supabaseMockService';
 
@@ -339,23 +337,6 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
         }));
       }
     }
-  };
-
-  const handleAttachSampleAsset = (questionId: string, sampleIdx: number) => {
-    const sample = SAMPLE_PROOF_ASSETS[sampleIdx];
-    if (!sample) return;
-    setErrorMessage('');
-    const newEvidence: UploadedEvidence = {
-      id: `img_sample_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      fileName: sample.fileName,
-      fileSize: sample.fileSize,
-      mimeType: sample.mimeType,
-      dataUrl: sample.dataUrl,
-    };
-    setImageAnswers((prev) => ({
-      ...prev,
-      [questionId]: [...(prev[questionId] || []), newEvidence],
-    }));
   };
 
   const handleRemoveImage = (questionId: string, imageId: string) => {
@@ -882,20 +863,6 @@ export const KpiSubmissionForm: React.FC<KpiSubmissionFormProps> = ({
 
             {q.type === 'image_upload' && (
               <div className="pt-1 space-y-3">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {SAMPLE_PROOF_ASSETS.map((sample, sIdx) => (
-                    <button
-                      key={sample.fileName}
-                      type="button"
-                      onClick={() => handleAttachSampleAsset(q.id, sIdx)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors whitespace-nowrap cursor-pointer"
-                    >
-                      <Sparkles className="w-3 h-3 text-slate-500" />
-                      <span>+ แนบตัวอย่าง{sample.label}</span>
-                    </button>
-                  ))}
-                </div>
-
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
